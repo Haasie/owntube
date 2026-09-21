@@ -200,6 +200,7 @@ export function HlsVodBlock({
   useEffect(() => {
     setShortsWantsPlay(true);
   }, [reactKey]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the <video> is keyed by reactKey, so a new stream is a new element to re-attach to.
   useEffect(() => {
     if (!shortsMode) return;
     const el = videoRef.current;
@@ -340,7 +341,6 @@ export function HlsVodBlock({
             : "aspect-video w-full bg-black",
       )}
     >
-      {/* biome-ignore lint/a11y/useMediaCaption: subtitle <track>s are provided dynamically from the `captions` prop (mapped children the rule can't statically see). */}
       <video
         key={reactKey}
         ref={videoRef}
