@@ -91,6 +91,29 @@ describe("segmentListToTemplate", () => {
     expect(out).toContain('<S t="500000" d="5000" r="2"/>');
   });
 
+  it("re-anchors availabilityStartTime on the first segment's ingest time", () => {
+    // A 24/7 stream: media time far older than YouTube's availabilityStartTime.
+    const mpd = liveMpd({ segments: 3 })
+      .replace("<MPD ", '<MPD availabilityStartTime="2026-09-21T04:43:51" ')
+      .replace(
+        '<Period start="PT500.000S"',
+        '<Period start="PT500.000S" yt:segmentIngestTime="2026-09-21T18:31:45.002"',
+      );
+    const out = segmentListToTemplate(mpd) ?? "";
+    // 18:31:45.002 minus the first segment's 500s of media time.
+    expect(out).toContain('availabilityStartTime="2026-09-21T18:23:25.002Z"');
+  });
+
+  it("leaves availabilityStartTime alone without an ingest time", () => {
+    const mpd = liveMpd({ segments: 3 }).replace(
+      "<MPD ",
+      '<MPD availabilityStartTime="2026-09-21T04:43:51" ',
+    );
+    expect(segmentListToTemplate(mpd)).toContain(
+      'availabilityStartTime="2026-09-21T04:43:51"',
+    );
+  });
+
   it("keeps explicit times in unrolled and mixed-duration timelines", () => {
     const timeline =
       '<S t="1000" d="5000"/><S d="5000"/><S d="2000"/><S d="5000" r="1"/>';

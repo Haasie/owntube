@@ -229,7 +229,7 @@ export function segmentListToTemplate(mpd: string): string | null {
     .replace(/^<Period\b/, '<Period start="PT0S"');
 
   let ok = true;
-  const out = mpd
+  const out = reanchorAvailabilityStart(mpd, periodTag, entries, timescale)
     .replace(periodList[0], "")
     .replace(periodTag, rebasedPeriodTag)
     .replace(
@@ -260,6 +260,41 @@ export function segmentListToTemplate(mpd: string): string | null {
       },
     );
   return ok && !out.includes("<SegmentList") ? out : null;
+}
+
+/**
+ * Set `availabilityStartTime` to the wall-clock time of media time 0, so that
+ * dash.js's live edge (now − availabilityStartTime) lands on the newest
+ * segments.
+ *
+ * YouTube's own value only fits a stream whose media timeline started with it.
+ * A long-running (24/7) stream keeps counting media time across encoder
+ * reconnects while `availabilityStartTime` jumps to the reconnect: seen with
+ * segments at ~195 days of media time and an `availabilityStartTime` of 18
+ * hours ago, which put the live edge half a year before the first segment —
+ * dash.js loaded the init segments and never requested media. The Period's
+ * `yt:segmentIngestTime` (when the first listed segment was ingested) is a
+ * reliable anchor for any stream. Without it the manifest is left alone.
+ */
+function reanchorAvailabilityStart(
+  mpd: string,
+  periodTag: string,
+  entries: TimelineEntry[],
+  timescale: number,
+): string {
+  const ingest = /\byt:segmentIngestTime="([^"]+)"/.exec(periodTag)?.[1];
+  const first = entries[0];
+  if (!ingest || !first) return mpd;
+  // YouTube writes UTC times without a zone designator.
+  const ingestMs = Date.parse(
+    /Z|[+-]\d\d:?\d\d$/.test(ingest) ? ingest : `${ingest}Z`,
+  );
+  if (!Number.isFinite(ingestMs)) return mpd;
+  const ast = new Date(ingestMs - (first.t / timescale) * 1000).toISOString();
+  return mpd.replace(
+    /(<MPD\b[^>]*?\bavailabilityStartTime=")[^"]*"/,
+    `$1${ast}"`,
+  );
 }
 
 /** The manifest the browser gets: segments via our proxy, as a template. */
