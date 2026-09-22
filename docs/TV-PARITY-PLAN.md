@@ -1,6 +1,6 @@
 # OwnTube TV ↔ web / YouTube TV parity: phased plan
 
-Status: **in progress.** Written 2026-09-22.
+Status: **done** (all phases shipped 2026-09-22). Written 2026-09-22.
 
 | phase | state | commits |
 |---|---|---|
@@ -9,8 +9,8 @@ Status: **in progress.** Written 2026-09-22.
 | 2 — player controls (quality, captions, speed, subscribe, save-to) | done | `9d460ff` |
 | 3 — browsing (home blocks, search, channels, library editing) | done | `61a2d66` |
 | 4 — distribution (server URL, versioning, updates, CI) | done (CI dropped) | `9c9dadf` |
-| 5 — Android TV platform (Watch Next, deep links, Send to TV) | done | see git log |
-| 6 — depth (description/comments, live polish, Shorts, profiles) | not started | — |
+| 5 — Android TV platform (Watch Next, deep links, Send to TV) | done | `4fd5819` |
+| 6 — depth (description/comments, live polish, Shorts, profiles) | done | see git log |
 
 Already shipped before this plan: device pairing, session-expiry → sign-in
 and Search D-pad focus (`f051369`), faster browsing and playback in `Shell`,
@@ -413,6 +413,49 @@ native module, following the pattern of `plugins/with-tv-search.js`.
   (a token per profile) and switch between them from Settings or at start.
 - **Recommendation feedback:** "Not interested" and "Don't recommend
   channel" (`interactions.set` ignore, `blockRecommendationChannel`).
+
+**As built:**
+- Description and comments: `components/DetailsPanel.tsx`, opened from the
+  player's ⓘ button.
+  - Paragraphs and comments are focusable blocks, so the D-pad scrolls
+    through them.
+  - Comments come Top or Newest first, with More.
+  - Upstream comment HTML is shown as plain text.
+- Errors: `video.detail` now maps upcoming → `PRECONDITION_FAILED`, with
+  `premiereTimestamp` added by a new tRPC `errorFormatter`, and unavailable
+  → `NOT_FOUND`. Age-restricted was already `UNPROCESSABLE_CONTENT`.
+  - The TV shows "Not started yet" (with the start time; retries every
+    minute), "Age-restricted", "Video unavailable" or the generic message.
+  - Retry is offered where it can help.
+- Live polish:
+  - A LIVE badge.
+  - "Go live" at 15 s or more behind the edge, via
+    `player.currentOffsetFromLive`.
+  - Scrubbing uses the player's DVR duration.
+  - Post-live DVR needs nothing extra, because the server's DASH route
+    already falls back to the companion's manifest.
+- Shorts:
+  - A Shorts section with a portrait player: Up/Down change shorts, OK
+    pauses, focus is pinned vertically, each short is marked seen after 2 s.
+  - A Shorts row on Recommended, which is where the web shows its shelf.
+    Home blocks have no Shorts type.
+- Profiles:
+  - `lib/auth-token.ts` keeps one token per profile, each under its own
+    SecureStore key; the active one stays under the old key.
+  - Profiles are labelled from a new `auth.me` procedure.
+  - "Who's watching" appears at start with more than one profile, and from
+    Settings → Switch or add profile.
+  - Sign out removes only the active profile. Changing server removes them
+    all.
+- Recommendation feedback: Not interested and Don't recommend channel, in
+  the card menu (phase 3) and the player's settings panel.
+- Verified on the emulator:
+  - The unavailable screen.
+  - The description and comments panel.
+  - The Shorts player, including Up/Down with focus pinned.
+  - "Who's watching", with the email label.
+- Not exercised: an upcoming or age-restricted video, a live stream's
+  Go live, and adding a second profile.
 
 ## Cross-cutting rules
 

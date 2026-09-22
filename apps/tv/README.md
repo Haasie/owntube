@@ -9,36 +9,30 @@ Roadmap: [`docs/TV-PARITY-PLAN.md`](../../docs/TV-PARITY-PLAN.md).
 ## What it does
 
 - **Sign-in** by device pairing (code + QR, approved from the web app), with email + password as
-  a fallback. An expired session returns to sign-in.
-- **Sections** in a D-pad sidebar (order editable in Settings): Home (hero + rows), Subscriptions
-  (with tags), Recommended, Search (text and voice, plus the Android TV global search intent via
-  `plugins/with-tv-search.js`), Queue, Playlists, History, Settings. Channel pages open from any
-  card.
-- **Player**: server DASH (`/dash/<id>/manifest.mpd`) with muxed fallbacks, live via
-  `/dash/<id>/live.mpd`, audio language, subtitles, chapters, storyboard scrubbing, SponsorBlock
-  auto-skip (categories from the user's settings) and resume/watch progress.
+  a fallback. Several accounts can be paired: "Who's watching" at start, and Settings → Switch or
+  add profile. An expired session returns to sign-in.
+- **Home** mirrors the web home: a hero, Continue watching, then the user's web home blocks as
+  rows. **Sections** in a D-pad sidebar (order editable in Settings): Home, Search (text and
+  voice, suggestions, recent searches, channel results, sort), Queue, Subscriptions (every
+  channel, tags, new-upload dots), Recommended (with a Shorts row), Trending, Shorts (vertical
+  player, Up/Down between shorts), Saved, Playlists, History, Settings. Channel pages have
+  Videos / Shorts / Playlists / Similar tabs and tag chips.
+- **Long-press OK** on any card opens its menu: queue, save, save to playlist, mark watched, not
+  interested, don't recommend channel, go to channel, plus reorder/remove on Queue, Playlists and
+  History.
+- **Player**: server DASH (`/dash/<id>/manifest.mpd`, with `maxHeight` for the quality choice) and
+  fallbacks, live via `/dash/<id>/live.mpd` (LIVE badge, Go live), a settings panel (quality,
+  captions, audio language, speed, chapters, save to playlist, stats), SponsorBlock marks and
+  skip/undo, subscribe, description and comments, and an Up next card that plays on through the
+  queue, a playlist or the row a video came from (remote next/previous keys too). Upcoming,
+  age-restricted and unavailable videos say so, with Retry.
+- **Android TV**: videos left part-way appear in the launcher's Continue watching row
+  (`modules/watch-next`); YouTube links offer OwnTube in "Open with"; now-playing metadata for the
+  system and the Assistant; **Play on TV** from the web watch page reaches a TV that is on.
 
-Settings shared with the web (playback quality, SponsorBlock, …) are read from and written to
-`settings.*` on the server; device-only preferences (sidebar order) stay in SecureStore.
-
-## Install and typecheck
-
-`apps/tv` is **not** in the pnpm workspace: Expo 52 needs React 18, which conflicts with the web
-app's React 19. It installs on its own:
-
-```bash
-cd apps/tv
-pnpm install --ignore-workspace --shamefully-hoist   # corepack pnpm 9.15.9
-pnpm run typecheck
-```
-
-`--shamefully-hoist` is required: Metro expects a flat `node_modules` and resolves transitive
-runtime deps from the top level (pnpm ≥ 10 ignores the `.npmrc` key, so pass the flag).
-
-The typecheck resolves `@web/*` (`../web/src/*`), so the web app's deps must be installed too. Most
-`@web` imports are `import type` (the `AppRouter`, `UnifiedVideo`) and are erased by Babel; the
-few runtime ones (`@web/lib/video-chapters`, `video-scrub-frames`, `query-retry`,
-`action-icon-paths`) must stay free of server code and heavy deps such as zod.
+Settings shared with the web (playback quality, autoplay, SponsorBlock, home blocks…) are read
+from and written to `settings.*` on the server; device-only preferences (sidebar order, caption
+language, speed, recent searches, profiles) stay on the TV.
 
 ## Server
 

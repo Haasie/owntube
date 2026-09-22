@@ -27,6 +27,8 @@ export type OpenVideoOptions = {
 export type Nav = {
   openVideo: (videoId: string, options?: OpenVideoOptions) => void;
   openChannel: (channelId: string) => void;
+  /** The Shorts player, starting at this short when given. */
+  openShorts: (start?: UnifiedVideo) => void;
 };
 
 /** The neighbours of `videoId` within its context, if it has one. */

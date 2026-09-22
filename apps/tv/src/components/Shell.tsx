@@ -1,3 +1,4 @@
+import type { UnifiedVideo } from "@web/server/services/proxy.types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, BackHandler, Linking, StyleSheet, View } from "react-native";
 import { CardMenuProvider } from "@/components/CardMenu";
@@ -23,6 +24,7 @@ import { RecommendedScreen } from "@/screens/RecommendedScreen";
 import { SavedScreen } from "@/screens/SavedScreen";
 import { SearchScreen } from "@/screens/SearchScreen";
 import { SettingsScreen } from "@/screens/SettingsScreen";
+import { ShortsScreen } from "@/screens/ShortsScreen";
 import { SubscriptionsScreen } from "@/screens/SubscriptionsScreen";
 import { TrendingScreen } from "@/screens/TrendingScreen";
 import { WatchScreen } from "@/screens/WatchScreen";
@@ -45,14 +47,20 @@ type Route =
 export function Shell({
   onSignOut,
   onChangeServer,
+  onSwitchProfile,
 }: {
   onSignOut: () => void;
   onChangeServer: () => void;
+  onSwitchProfile: () => void;
 }) {
   useLongSelectDispatcher();
   const [section, setSection] = useState<Section>("home");
   const [stack, setStack] = useState<Route[]>([]);
   const [searchQuery, setSearchQuery] = useState<string | undefined>(undefined);
+  /** The short the Shorts section opens at (from a Shorts row), if any. */
+  const [shortsStart, setShortsStart] = useState<UnifiedVideo | undefined>(
+    undefined,
+  );
   const [sections, setSections] = useState<Section[] | undefined>(undefined);
   /**
    * The rail overlays the screen, so an expanded rail used to cover the content
@@ -110,6 +118,11 @@ export function Shell({
         setStack((s) => [...s, watchRoute(videoId, options)]),
       openChannel: (channelId) =>
         setStack((s) => [...s, { name: "channel", channelId }]),
+      openShorts: (start) => {
+        setShortsStart(start);
+        setSection("shorts");
+        setStack([]);
+      },
     }),
     [watchRoute],
   );
@@ -264,6 +277,11 @@ export function Shell({
       <SavedScreen nav={nav} />
     ) : section === "trending" ? (
       <TrendingScreen nav={nav} />
+    ) : section === "shorts" ? (
+      <ShortsScreen
+        key={shortsStart?.videoId ?? "shorts"}
+        startVideo={shortsStart}
+      />
     ) : section === "subscriptions" ? (
       <SubscriptionsScreen nav={nav} />
     ) : section === "settings" ? (
@@ -271,6 +289,7 @@ export function Shell({
         onSidebarChange={setSections}
         onSignOut={onSignOut}
         onChangeServer={onChangeServer}
+        onSwitchProfile={onSwitchProfile}
       />
     ) : section === "playlists" ? (
       <PlaylistsScreen nav={nav} />

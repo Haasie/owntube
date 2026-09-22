@@ -30,6 +30,7 @@ import {
   useTVEventHandler,
   View,
 } from "react-native";
+import { DetailsPanel } from "@/components/DetailsPanel";
 import { FocusButton } from "@/components/FocusButton";
 import { IconButton } from "@/components/IconButton";
 import {
@@ -83,9 +84,39 @@ const DEFAULT_SKIP_CATEGORIES: SponsorBlockCategory[] = [
   "hook",
 ];
 
+/**
+ * Why a video won't play, for a message that says what to do: wait for an
+ * upcoming stream, sign in to YouTube elsewhere for an age gate, or give up
+ * on a removed video. The server maps these onto tRPC codes (video.detail).
+ */
+type PlaybackProblem =
+  | { kind: "upcoming"; startsAt?: number }
+  | { kind: "age" }
+  | { kind: "unavailable" }
+  | { kind: "other" };
+
+function classifyError(err: unknown): PlaybackProblem {
+  const data = (
+    err as { data?: { code?: string; premiereTimestamp?: number | null } }
+  )?.data;
+  switch (data?.code) {
+    case "PRECONDITION_FAILED":
+      return {
+        kind: "upcoming",
+        startsAt: data.premiereTimestamp ?? undefined,
+      };
+    case "UNPROCESSABLE_CONTENT":
+      return { kind: "age" };
+    case "NOT_FOUND":
+      return { kind: "unavailable" };
+    default:
+      return { kind: "other" };
+  }
+}
+
 type LoadState =
   | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; problem: PlaybackProblem }
   | {
       status: "ready";
       detail: VideoDetail;
@@ -273,6 +304,15 @@ export function WatchScreen({
   const swallowPressRef = useRef(false);
   /** Playback reached the end (and wasn't dismissed since). */
   const [ended, setEnded] = useState(false);
+  /** Bumped by Retry on the error screen to load the video again. */
+  const [reloadKey, setReloadKey] = useState(0);
+  /** Description and comments beside the picture. */
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsOpenRef = useRef(false);
+  detailsOpenRef.current = detailsOpen;
+  const closeDetails = useCallback(() => setDetailsOpen(false), []);
+  /** Live: seconds behind the live edge, while the controls show. */
+  const [behindLive, setBehindLive] = useState(0);
   // Scrubbing: left/right move a pending position that only commits on release,
   // so holding the D-pad sweeps the bar instead of firing a seek per press.
   const [scrubSeconds, setScrubSeconds] = useState<number | null>(null);
@@ -404,6 +444,8 @@ export function WatchScreen({
   });
 
   // Playback detail (blocking) + SponsorBlock/related (best-effort, parallel).
+  // Re-runs on reloadKey too: Retry on the error screen.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey is a trigger
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
@@ -447,6 +489,9 @@ export function WatchScreen({
           setState({
             status: "error",
             message: "This video has no playable stream available.",
+            problem: detail.isUpcoming
+              ? { kind: "upcoming" }
+              : { kind: "other" },
           });
           return;
         }
@@ -482,13 +527,17 @@ export function WatchScreen({
       })
       .catch((err: unknown) => {
         if (!cancelled)
-          setState({ status: "error", message: errorMessage(err) });
+          setState({
+            status: "error",
+            message: errorMessage(err),
+            problem: classifyError(err),
+          });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [videoId]);
+  }, [videoId, reloadKey]);
 
   useEffect(() => {
     Animated.timing(relatedHeight, {
@@ -710,7 +759,10 @@ export function WatchScreen({
       // The clock only feeds the overlay. While it's hidden, skip the state
       // update: each one re-renders this whole screen, once a second, for
       // nothing on screen. Revealing the overlay resyncs it (see below).
-      if (controlsVisibleRef.current) setCurrentTime(currentTime);
+      if (controlsVisibleRef.current) {
+        setCurrentTime(currentTime);
+        if (player.isLive) setBehindLive(player.currentOffsetFromLive ?? 0);
+      }
       const hit = segmentsRef.current.find(
         (s) =>
           currentTime >= s.startSeconds &&
@@ -916,9 +968,10 @@ export function WatchScreen({
   // usual auto-hide, rather than leaving whatever state they were in.
   const menuWasOpenRef = useRef(false);
   useEffect(() => {
-    if (menuWasOpenRef.current && !menuOpen) revealControls();
-    menuWasOpenRef.current = menuOpen;
-  }, [menuOpen, revealControls]);
+    const open = menuOpen || detailsOpen;
+    if (menuWasOpenRef.current && !open) revealControls();
+    menuWasOpenRef.current = open;
+  }, [menuOpen, detailsOpen, revealControls]);
 
   // Android's MediaSession (registered by expo-video for the hardware
   // Play/Pause key) claims that key before it reaches our TVEventHandler, so
@@ -1096,7 +1149,13 @@ export function WatchScreen({
     if (event.eventType === "focus" || event.eventType === "blur") return;
     // The up-next card and the settings panel own the screen; their buttons
     // take the D-pad.
-    if (showUpNextRef.current || menuOpenRef.current) return;
+    if (
+      showUpNextRef.current ||
+      menuOpenRef.current ||
+      detailsOpenRef.current
+    ) {
+      return;
+    }
     // ACTION_UP is 1; the same long-press event fires on press and release.
     const isKeyUp = Number(event.eventKeyAction) === 1;
     // OK with the controls hidden acts on a SponsorBlock toast (undo / skip)
@@ -1283,6 +1342,15 @@ export function WatchScreen({
     [],
   );
 
+  // An upcoming stream checks again every minute, so it starts by itself.
+  const upcoming =
+    state.status === "error" && state.problem.kind === "upcoming";
+  useEffect(() => {
+    if (!upcoming) return;
+    const timer = setInterval(() => setReloadKey((k) => k + 1), 60_000);
+    return () => clearInterval(timer);
+  }, [upcoming]);
+
   if (state.status === "loading") {
     return (
       <View style={styles.centered}>
@@ -1293,11 +1361,44 @@ export function WatchScreen({
   }
 
   if (state.status === "error") {
+    const { problem } = state;
+    const title =
+      problem.kind === "upcoming"
+        ? "Not started yet"
+        : problem.kind === "age"
+          ? "Age-restricted"
+          : problem.kind === "unavailable"
+            ? "Video unavailable"
+            : "Playback unavailable";
+    const body =
+      problem.kind === "upcoming"
+        ? problem.startsAt
+          ? `Starts ${new Date(problem.startsAt * 1000).toLocaleString()}. This screen checks again every minute.`
+          : "This stream or premiere hasn't started. This screen checks again every minute."
+        : problem.kind === "age"
+          ? "YouTube only shows this video to signed-in adults, so it can't play here."
+          : problem.kind === "unavailable"
+            ? "It may have been removed or made private."
+            : state.message;
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorTitle}>Playback unavailable</Text>
-        <Text style={styles.muted}>{state.message}</Text>
-        <FocusButton label="Back" onPress={onBack} hasTVPreferredFocus />
+        <Text style={styles.errorTitle}>{title}</Text>
+        <Text style={[styles.muted, styles.errorBody]}>{body}</Text>
+        <View style={styles.errorButtons}>
+          {problem.kind !== "unavailable" ? (
+            <FocusButton
+              label="Retry"
+              variant="primary"
+              onPress={() => setReloadKey((k) => k + 1)}
+              hasTVPreferredFocus
+            />
+          ) : null}
+          <FocusButton
+            label="Back"
+            onPress={onBack}
+            hasTVPreferredFocus={problem.kind === "unavailable"}
+          />
+        </View>
       </View>
     );
   }
@@ -1480,6 +1581,44 @@ export function WatchScreen({
               },
             },
             {
+              key: "ignore",
+              label: "Not interested",
+              onPress: () => {
+                setMenuOpen(false);
+                trpcClient.interactions.set
+                  .mutate({
+                    videoId,
+                    channelId: detail.channelId ?? undefined,
+                    type: "ignore",
+                    active: true,
+                    title: detail.title,
+                  })
+                  .then(() =>
+                    showToast({ text: "Got it — you'll see less like this" }),
+                  )
+                  .catch(() => {});
+              },
+            },
+            ...(detail.channelId
+              ? [
+                  {
+                    key: "block",
+                    label: "Don't recommend channel",
+                    onPress: () => {
+                      setMenuOpen(false);
+                      trpcClient.interactions.blockRecommendationChannel
+                        .mutate({ channelId: detail.channelId as string })
+                        .then(() =>
+                          showToast({
+                            text: `Won't recommend ${detail.channelName ?? "this channel"}`,
+                          }),
+                        )
+                        .catch(() => {});
+                    },
+                  },
+                ]
+              : []),
+            {
               key: "stats",
               label: "Stats for nerds",
               detail: statsOn ? "On" : "Off",
@@ -1533,6 +1672,8 @@ export function WatchScreen({
         />
       ) : menuOpen ? (
         <MenuPanel buildPage={buildPage} onClose={closeMenu} />
+      ) : detailsOpen ? (
+        <DetailsPanel detail={detail} onClose={closeDetails} />
       ) : (
         // Controls stay mounted (so a focused button always catches the next key
         // to re-reveal them); visibility is just opacity. The up-next card
@@ -1545,6 +1686,11 @@ export function WatchScreen({
           pointerEvents="box-none"
         >
           <View style={styles.topInfo} pointerEvents="none">
+            {detail.isLive ? (
+              <View style={styles.liveBadge}>
+                <Text style={styles.liveBadgeText}>LIVE</Text>
+              </View>
+            ) : null}
             <Text style={styles.title} numberOfLines={2}>
               {detail.title}
             </Text>
@@ -1714,6 +1860,18 @@ export function WatchScreen({
                   onPress={() => seekBy(10)}
                   onFocusChange={onButtonFocusChange}
                 />
+                {/* Same threshold as the web (LIVE_EDGE_SECONDS). */}
+                {detail.isLive && behindLive >= LIVE_EDGE_SECONDS ? (
+                  <FocusButton
+                    label="Go live"
+                    onPress={() => {
+                      player.currentTime = player.duration;
+                      setBehindLive(0);
+                    }}
+                    onFocusChange={onButtonFocusChange}
+                    style={styles.goLive}
+                  />
+                ) : null}
               </View>
 
               {/* Mirrors the web player's action set. */}
@@ -1754,6 +1912,11 @@ export function WatchScreen({
                     onFocusChange={onButtonFocusChange}
                   />
                 ) : null}
+                <IconButton
+                  icon="info"
+                  onPress={() => setDetailsOpen(true)}
+                  onFocusChange={onButtonFocusChange}
+                />
                 {/* Quality, captions, audio language, speed, chapters… */}
                 <IconButton
                   icon="settings"
@@ -1806,6 +1969,9 @@ function clampPreviewPct(pct: number): number {
 
 /** Layout width in dp of a 1080p TV panel (density 2). */
 const TV_WIDTH_DP = 960;
+
+/** Seconds behind the live edge before "Go live" shows (the web's value). */
+const LIVE_EDGE_SECONDS = 15;
 
 /** Watch Next row bounds: worth resuming, and as good as finished. */
 const WATCH_NEXT_MIN_FRACTION = 0.03;
@@ -1969,6 +2135,22 @@ const styles = StyleSheet.create({
   toastText: { color: colors.foreground, fontSize: fontSize.md },
   toastHint: { color: colors.mutedForeground, fontSize: fontSize.sm },
   subscribe: { minHeight: 40, marginLeft: spacing.sm },
+  goLive: { minHeight: 40, paddingHorizontal: spacing.md },
+  liveBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: colors.brand,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginBottom: spacing.xs,
+  },
+  liveBadgeText: {
+    color: colors.primaryForeground,
+    fontSize: fontSize.sm,
+    fontWeight: "800",
+  },
+  errorBody: { maxWidth: 720, textAlign: "center" },
+  errorButtons: { flexDirection: "row", gap: spacing.md },
   stats: {
     position: "absolute",
     top: 36,

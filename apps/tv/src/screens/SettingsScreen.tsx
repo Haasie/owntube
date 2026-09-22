@@ -16,6 +16,7 @@ import {
   checkForUpdate,
   VERSION_CODE,
 } from "@/lib/app-version";
+import { getActiveProfile, type Profile } from "@/lib/auth-token";
 import { baseUrl } from "@/lib/config";
 import { errorMessage } from "@/lib/error-message";
 import { queryClient } from "@/lib/query-client";
@@ -50,13 +51,20 @@ export function SettingsScreen({
   onSidebarChange,
   onSignOut,
   onChangeServer,
+  onSwitchProfile,
 }: {
   /** Lets the shell re-render its rail as soon as the order changes. */
   onSidebarChange?: (order: Section[]) => void;
   onSignOut: () => void;
   /** Signs out and returns to the server screen. */
   onChangeServer: () => void;
+  /** Who's watching: another profile, or add one. */
+  onSwitchProfile: () => void;
 }) {
+  const [profile, setProfile] = useState<Profile | null>(null);
+  useEffect(() => {
+    getActiveProfile().then(setProfile);
+  }, []);
   const [update, setUpdate] = useState<AvailableUpdate | null>(null);
   useEffect(() => {
     checkForUpdate().then(setUpdate);
@@ -185,6 +193,8 @@ export function SettingsScreen({
 
       <Text style={styles.section}>Account</Text>
       <View style={styles.row}>
+        {profile ? <Text style={styles.value}>{profile.label}</Text> : null}
+        <FocusButton label="Switch or add profile" onPress={onSwitchProfile} />
         <FocusButton label="Sign out" onPress={onSignOut} />
       </View>
 

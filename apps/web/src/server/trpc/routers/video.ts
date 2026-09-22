@@ -2,7 +2,9 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { RateLimitExceededError } from "@/server/errors/rate-limit-exceeded";
 import { UpstreamAgeRestrictedError } from "@/server/errors/upstream-age-restricted";
+import { UpstreamLiveUpcomingError } from "@/server/errors/upstream-live-upcoming";
 import { UpstreamUnavailableError } from "@/server/errors/upstream-unavailable";
+import { UpstreamVideoUnavailableError } from "@/server/errors/upstream-video-unavailable";
 import {
   fetchRelatedVideos,
   fetchVideoComments,
@@ -35,6 +37,16 @@ export const videoRouter = router({
             code: "UNPROCESSABLE_CONTENT",
             message: e.message,
           });
+        }
+        if (e instanceof UpstreamLiveUpcomingError) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: e.message,
+            cause: e,
+          });
+        }
+        if (e instanceof UpstreamVideoUnavailableError) {
+          throw new TRPCError({ code: "NOT_FOUND", message: e.message });
         }
         if (e instanceof UpstreamUnavailableError) {
           throw new TRPCError({ code: "BAD_GATEWAY", message: e.message });
@@ -76,6 +88,16 @@ export const videoRouter = router({
           { cacheOnly: ctx.prefetchCacheOnly },
         );
       } catch (e) {
+        if (e instanceof UpstreamLiveUpcomingError) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: e.message,
+            cause: e,
+          });
+        }
+        if (e instanceof UpstreamVideoUnavailableError) {
+          throw new TRPCError({ code: "NOT_FOUND", message: e.message });
+        }
         if (e instanceof UpstreamUnavailableError) {
           throw new TRPCError({ code: "BAD_GATEWAY", message: e.message });
         }

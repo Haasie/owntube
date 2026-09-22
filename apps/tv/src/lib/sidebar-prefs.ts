@@ -17,6 +17,7 @@ export const ALL_SECTIONS: Section[] = [
   "subscriptions",
   "recommended",
   "trending",
+  "shorts",
   "saved",
   "playlists",
   "history",

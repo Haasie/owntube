@@ -134,3 +134,26 @@ export function videoThumbnailUrl(video: {
     `https://i.ytimg.com/vi/${encodeURIComponent(video.videoId)}/hqdefault.jpg`
   );
 }
+
+/**
+ * Upstream comment text arrives as HTML (links for timestamps, entities).
+ * The TV shows it as plain text: line breaks kept, tags dropped, entities
+ * decoded.
+ */
+export function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&#(\d+);/g, (_, code: string) =>
+      String.fromCodePoint(Number(code)),
+    )
+    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) =>
+      String.fromCodePoint(Number.parseInt(code, 16)),
+    )
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
