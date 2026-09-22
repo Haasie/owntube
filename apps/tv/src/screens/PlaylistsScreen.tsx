@@ -1,11 +1,14 @@
 import type { UnifiedVideo } from "@web/server/services/proxy.types";
 import { useEffect, useMemo, useState } from "react";
 import { FlatList, StyleSheet, Text, View } from "react-native";
+import { type CardMenuExtras, useCardMenu } from "@/components/CardMenu";
 import { CarouselFeed } from "@/components/CarouselFeed";
 import { FocusButton } from "@/components/FocusButton";
 import { errorMessage } from "@/lib/error-message";
 import type { Nav, PlayContext } from "@/lib/navigation";
 import { playAllStart } from "@/lib/play-all";
+import { queryClient } from "@/lib/query-client";
+import { moveId } from "@/lib/reorder";
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
 import { useInfiniteFeed } from "@/lib/use-infinite-feed";
@@ -66,6 +69,42 @@ export function PlaylistsScreen({ nav }: { nav: Nav }) {
   };
   const first = playAllStart(feed.videos, progress);
 
+  const { notify } = useCardMenu();
+  const menuExtras: CardMenuExtras = (video) => {
+    if (selected === null) return [];
+    const playlistId = selected;
+    const refresh = () =>
+      queryClient.invalidateQueries({
+        queryKey: ["feed", `playlists.itemsDetailed:${playlistId}`],
+      });
+    const ids = feed.videos.map((v) => v.videoId);
+    const move = (delta: -1 | 1) => {
+      const next = moveId(ids, video.videoId, delta);
+      if (!next) return;
+      trpcClient.playlists.reorderItems
+        .mutate({ playlistId, videoIds: next })
+        .then(refresh)
+        .catch(() => notify("Couldn't reorder the playlist"));
+    };
+    return [
+      {
+        key: "remove",
+        label: `Remove from ${heading}`,
+        onPress: () => {
+          trpcClient.playlists.removeItem
+            .mutate({ playlistId, videoId: video.videoId })
+            .then(() => {
+              notify(`Removed from ${heading}`);
+              return refresh();
+            })
+            .catch(() => notify("Couldn't update the playlist"));
+        },
+      },
+      { key: "up", label: "Move up", onPress: () => move(-1) },
+      { key: "down", label: "Move down", onPress: () => move(1) },
+    ];
+  };
+
   return (
     <View style={styles.screen}>
       <Text style={styles.title}>Playlists</Text>
@@ -100,6 +139,7 @@ export function PlaylistsScreen({ nav }: { nav: Nav }) {
           <CarouselFeed
             feed={feed}
             onSelect={play}
+            menuExtras={menuExtras}
             header={
               <View style={styles.feedHeader}>
                 <Text style={styles.heading}>{heading}</Text>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Image, StyleSheet, Text, View } from "react-native";
+import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
 import { CarouselFeed } from "@/components/CarouselFeed";
+import { ChannelTiles } from "@/components/ChannelTiles";
 import { FocusButton } from "@/components/FocusButton";
 import { channelInitial, formatSubscribersLabel } from "@/lib/format";
 import type { Nav } from "@/lib/navigation";
@@ -25,6 +26,11 @@ export function ChannelScreen({
   nav: Nav;
 }) {
   const [meta, setMeta] = useState<ChannelMeta>({});
+  const [tab, setTab] = useState<ChannelTab>("videos");
+  // Switching tabs remounts the page below the header, which drops focus;
+  // after a tab press, the chosen tab takes focus back (and the first video
+  // row doesn't grab it instead).
+  const [tabChosen, setTabChosen] = useState(false);
   const [pending, setPending] = useState(false);
   // Unknown state hides the button rather than showing a wrong label, so an
   // error leaves this undefined on purpose.
@@ -59,7 +65,11 @@ export function ChannelScreen({
   const feed = useInfiniteFeed<string>(
     (continuation) =>
       trpcClient.channel.page
-        .query({ channelId, continuation })
+        .query({
+          channelId,
+          continuation,
+          tab: tab === "shorts" ? "shorts" : "videos",
+        })
         .then((page) => {
           // Channel metadata only comes back on the first (non-continuation) page.
           if (!continuation) {
@@ -71,9 +81,66 @@ export function ChannelScreen({
           }
           return { items: page.videos, next: page.continuation ?? undefined };
         }),
-    [channelId],
+    [channelId, tab === "shorts" ? "shorts" : "videos"],
     `channel.page:${channelId}`,
   );
+
+  // The channel's own YouTube playlists, shown as cards; OK plays one through.
+  const playlistsFeed = useInfiniteFeed<never>(
+    () =>
+      tab !== "playlists"
+        ? Promise.resolve({ items: [], next: undefined })
+        : trpcClient.channel.playlists.query({ channelId }).then((r) => ({
+            items: r.playlists.map((p) => ({
+              videoId: p.playlistId,
+              title: p.title,
+              thumbnailUrl: p.thumbnailUrl ?? undefined,
+              channelName:
+                p.videoCount !== null ? `${p.videoCount} videos` : undefined,
+            })),
+            next: undefined,
+          })),
+    [channelId, tab === "playlists"],
+    `channel.playlists:${channelId}`,
+  );
+  const related = trpc.channel.relatedChannels.useQuery(
+    { channelId },
+    { enabled: tab === "similar" },
+  );
+  const playPlaylist = (playlistId: string) => {
+    trpcClient.channel.ytPlaylist
+      .query({ playlistId })
+      .then((playlist) => {
+        const first = playlist.videos[0];
+        if (!first) return;
+        nav.openVideo(first.videoId, {
+          context: {
+            source: "playlist",
+            label: playlist.title,
+            videos: playlist.videos,
+          },
+        });
+      })
+      .catch(() => {});
+  };
+
+  // Tag chips: every tag the user has, lit when this channel carries it; OK
+  // toggles. New tags are made on the web.
+  const allTags = trpc.channelTags.listAll.useQuery();
+  const channelTags = trpc.channelTags.listForChannel.useQuery({ channelId });
+  const toggleTag = (tag: string) => {
+    const has = (channelTags.data ?? []).includes(tag);
+    (has
+      ? trpcClient.channelTags.remove.mutate({ channelId, tag })
+      : trpcClient.channelTags.add.mutate({ channelId, tag })
+    )
+      .then(() => {
+        void channelTags.refetch();
+        void allTags.refetch();
+        void queryClient.invalidateQueries({ queryKey: [["channelTags"]] });
+      })
+      .catch(() => {});
+  };
 
   const subscribersLabel = formatSubscribersLabel(meta.subscriberCount);
   const header = (
@@ -101,19 +168,119 @@ export function ChannelScreen({
     </View>
   );
 
+  const tags = allTags.data ?? [];
+  const chrome = (
+    <View style={styles.chrome}>
+      {header}
+      <View style={styles.chips}>
+        {TABS.map(({ key, label }) => (
+          <FocusButton
+            key={key}
+            label={label}
+            variant={tab === key ? "primary" : "ghost"}
+            hasTVPreferredFocus={tabChosen && tab === key}
+            onPress={() => {
+              setTabChosen(true);
+              setTab(key);
+            }}
+            style={styles.chip}
+          />
+        ))}
+      </View>
+      {tags.length > 0 ? (
+        <View style={styles.chips}>
+          <Text style={styles.chipsLabel}>Tags</Text>
+          {tags.map(({ tag }) => (
+            <FocusButton
+              key={tag}
+              label={tag}
+              variant={
+                (channelTags.data ?? []).includes(tag) ? "primary" : "ghost"
+              }
+              onPress={() => toggleTag(tag)}
+              style={styles.chip}
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+
+  if (tab === "similar") {
+    const channels = (related.data?.channels ?? []).map((c) => ({
+      channelId: c.channelId,
+      name: c.channelName,
+      avatarUrl: c.channelAvatarUrl,
+      subscriberCount: c.subscriberCount,
+    }));
+    return (
+      <ScrollView contentContainerStyle={styles.similar}>
+        {chrome}
+        {channels.length > 0 ? (
+          <ChannelTiles
+            title="Similar channels"
+            channels={channels}
+            onSelect={nav.openChannel}
+          />
+        ) : (
+          <Text style={styles.subs}>
+            {related.isLoading ? "Loading…" : "No similar channels found."}
+          </Text>
+        )}
+      </ScrollView>
+    );
+  }
+
+  if (tab === "playlists") {
+    return (
+      <CarouselFeed
+        feed={playlistsFeed}
+        onSelect={playPlaylist}
+        header={chrome}
+        preferFirstRowFocus={!tabChosen}
+        disableMenu
+        emptyText="This channel has no playlists."
+      />
+    );
+  }
+
   return (
     <CarouselFeed
       feed={feed}
       onSelect={(videoId, videos) =>
         nav.openVideo(videoId, { context: { source: "feed", videos } })
       }
-      header={header}
-      emptyText="This channel has no videos."
+      header={chrome}
+      preferFirstRowFocus={!tabChosen}
+      emptyText={
+        tab === "shorts"
+          ? "This channel has no Shorts."
+          : "This channel has no videos."
+      }
     />
   );
 }
 
+type ChannelTab = "videos" | "shorts" | "playlists" | "similar";
+
+const TABS: { key: ChannelTab; label: string }[] = [
+  { key: "videos", label: "Videos" },
+  { key: "shorts", label: "Shorts" },
+  { key: "playlists", label: "Playlists" },
+  { key: "similar", label: "Similar" },
+];
+
 const styles = StyleSheet.create({
+  chrome: { gap: spacing.md },
+  chips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  chip: { minHeight: 40, paddingHorizontal: spacing.md },
+  chipsLabel: { color: colors.mutedForeground, fontSize: fontSize.sm },
+  similar: { gap: spacing.lg, paddingBottom: spacing.screen },
   headerText: { flex: 1 },
   header: {
     flexDirection: "row",

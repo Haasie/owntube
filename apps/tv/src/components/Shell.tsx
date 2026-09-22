@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated, BackHandler, Linking, StyleSheet, View } from "react-native";
+import { CardMenuProvider } from "@/components/CardMenu";
 import {
   EXPANDED_WIDTH,
   RAIL_WIDTH,
   type Section,
   Sidebar,
 } from "@/components/Sidebar";
+import { useLongSelectDispatcher } from "@/lib/long-press";
 import type { Nav, OpenVideoOptions, PlayContext } from "@/lib/navigation";
 import { loadSidebarPrefs } from "@/lib/sidebar-prefs";
 import { useResumeLookup, useWatchProgressRefresh } from "@/lib/watch-progress";
@@ -15,9 +17,11 @@ import { HomeScreen } from "@/screens/HomeScreen";
 import { PlaylistsScreen } from "@/screens/PlaylistsScreen";
 import { QueueScreen } from "@/screens/QueueScreen";
 import { RecommendedScreen } from "@/screens/RecommendedScreen";
+import { SavedScreen } from "@/screens/SavedScreen";
 import { SearchScreen } from "@/screens/SearchScreen";
 import { SettingsScreen } from "@/screens/SettingsScreen";
 import { SubscriptionsScreen } from "@/screens/SubscriptionsScreen";
+import { TrendingScreen } from "@/screens/TrendingScreen";
 import { WatchScreen } from "@/screens/WatchScreen";
 import { colors, spacing } from "@/theme";
 
@@ -36,6 +40,7 @@ type Route =
   | { name: "channel"; channelId: string };
 
 export function Shell({ onSignOut }: { onSignOut: () => void }) {
+  useLongSelectDispatcher();
   const [section, setSection] = useState<Section>("home");
   const [stack, setStack] = useState<Route[]>([]);
   const [searchQuery, setSearchQuery] = useState<string | undefined>(undefined);
@@ -199,6 +204,10 @@ export function Shell({ onSignOut }: { onSignOut: () => void }) {
       <SearchScreen nav={nav} initialQuery={searchQuery} />
     ) : section === "recommended" ? (
       <RecommendedScreen nav={nav} />
+    ) : section === "saved" ? (
+      <SavedScreen nav={nav} />
+    ) : section === "trending" ? (
+      <TrendingScreen nav={nav} />
     ) : section === "subscriptions" ? (
       <SubscriptionsScreen nav={nav} />
     ) : section === "settings" ? (
@@ -214,18 +223,20 @@ export function Shell({ onSignOut }: { onSignOut: () => void }) {
   // Content reserves the collapsed rail as a left margin; the sidebar overlays
   // the content (absolute) and expands rightward over it when focused.
   return (
-    <View style={styles.shell}>
-      <Animated.View style={[styles.content, { marginLeft: contentInset }]}>
-        {body}
-      </Animated.View>
-      <Sidebar
-        active={section}
-        onSelect={selectSection}
-        sections={sections}
-        onExpandedChange={onSidebarExpanded}
-        width={contentInset}
-      />
-    </View>
+    <CardMenuProvider nav={nav}>
+      <View style={styles.shell}>
+        <Animated.View style={[styles.content, { marginLeft: contentInset }]}>
+          {body}
+        </Animated.View>
+        <Sidebar
+          active={section}
+          onSelect={selectSection}
+          sections={sections}
+          onExpandedChange={onSidebarExpanded}
+          width={contentInset}
+        />
+      </View>
+    </CardMenuProvider>
   );
 }
 

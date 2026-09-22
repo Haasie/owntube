@@ -31,7 +31,6 @@ import {
   View,
 } from "react-native";
 import { FocusButton } from "@/components/FocusButton";
-import { FocusableTextInput } from "@/components/focusable-text-input";
 import { IconButton } from "@/components/IconButton";
 import {
   type MenuItem,
@@ -45,7 +44,7 @@ import {
   urlLooksLikeOriginalAudio,
 } from "@/lib/audio-languages";
 import { getToken } from "@/lib/auth-token";
-import { OWNTUBE_BASE_URL } from "@/lib/config";
+import { baseUrl } from "@/lib/config";
 import { errorMessage } from "@/lib/error-message";
 import { channelInitial, formatTime, formatViews } from "@/lib/format";
 import {
@@ -60,7 +59,9 @@ import {
   playerPrefs,
   savePlayerPrefs,
 } from "@/lib/player-prefs";
+import { usePlaylistMenu } from "@/lib/playlist-menu";
 import { queryClient } from "@/lib/query-client";
+import { useRecordWatchProgress } from "@/lib/record-watch-progress";
 import {
   SPONSORBLOCK_COLORS,
   SPONSORBLOCK_LABELS,
@@ -562,61 +563,12 @@ export function WatchScreen({
   };
 
   // Save to playlist: only fetched once the panel opens.
-  const playlistsQuery = trpc.playlists.list.useQuery(undefined, {
+  const playlistMenu = usePlaylistMenu({
+    video: { videoId, channelId },
     enabled: menuOpen,
+    notify: (text) => showToast({ text }),
+    onCreated: closeMenu,
   });
-  const membershipQuery = trpc.playlists.membership.useQuery(undefined, {
-    enabled: menuOpen,
-  });
-  const [newPlaylistName, setNewPlaylistName] = useState("");
-  const inPlaylist = (playlistId: number) =>
-    (membershipQuery.data ?? []).some(
-      (m) => m.playlistId === playlistId && m.videoId === videoId,
-    );
-  const togglePlaylist = (playlistId: number, name: string) => {
-    const detail = detailRef.current;
-    const adding = !inPlaylist(playlistId);
-    (adding
-      ? trpcClient.playlists.addItem.mutate({
-          playlistId,
-          videoId,
-          channelId: detail?.channelId ?? undefined,
-        })
-      : trpcClient.playlists.removeItem.mutate({ playlistId, videoId })
-    )
-      .then(() => {
-        showToast({
-          text: adding ? `Saved to ${name}` : `Removed from ${name}`,
-        });
-        void membershipQuery.refetch();
-        void queryClient.invalidateQueries({
-          queryKey: ["feed", `playlists.itemsDetailed:${playlistId}`],
-        });
-      })
-      .catch(() => showToast({ text: "Couldn't update the playlist" }));
-  };
-  const createPlaylist = () => {
-    const name = newPlaylistName.trim();
-    if (!name) return;
-    const detail = detailRef.current;
-    trpcClient.playlists.create
-      .mutate({ name })
-      .then(({ id }) =>
-        trpcClient.playlists.addItem.mutate({
-          playlistId: id,
-          videoId,
-          channelId: detail?.channelId ?? undefined,
-        }),
-      )
-      .then(() => {
-        setNewPlaylistName("");
-        setMenuOpen(false);
-        showToast({ text: `Saved to ${name}` });
-        void playlistsQuery.refetch();
-        void membershipQuery.refetch();
-      })
-      .catch(() => showToast({ text: "Couldn't create the playlist" }));
-  };
 
   const relatedQuery = trpc.video.related.useQuery({ videoId });
   const related: UnifiedVideo[] = relatedQuery.data?.videos ?? NO_VIDEOS;
@@ -811,50 +763,13 @@ export function WatchScreen({
     return () => sub.remove();
   }, []);
 
-  /**
-   * Report progress periodically, not only when leaving: a session that ends by
-   * pulling the plug (or the box sleeping) would otherwise record nothing, and
-   * the web app's resume position would sit stale.
-   */
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const detail = detailRef.current;
-      const watched = Math.floor(currentTimeRef.current);
-      if (!detail?.channelId || watched < PROGRESS_MIN_SECONDS) return;
-      if (!isPlayingRef.current) return;
-      trpcClient.history.upsertEvent
-        .mutate({
-          videoId,
-          channelId: detail.channelId,
-          durationWatched: watched,
-          positionSeconds: watched,
-          videoDurationSeconds: detail.durationSeconds,
-          videoTitle: detail.title,
-        })
-        .catch(() => {});
-    }, PROGRESS_REPORT_MS);
-    return () => clearInterval(timer);
-  }, [videoId]);
-
-  // Record watch progress to history on leave (feeds the recommender).
-  useEffect(() => {
-    return () => {
-      const detail = detailRef.current;
-      const watched = Math.floor(currentTimeRef.current);
-      if (!detail?.channelId || watched < 5) return;
-      const duration = detail.durationSeconds;
-      trpcClient.history.upsertEvent
-        .mutate({
-          videoId: detail.videoId,
-          channelId: detail.channelId,
-          durationWatched: watched,
-          completed: duration != null && watched >= duration * 0.9,
-          videoDurationSeconds: duration,
-          isShort: false,
-        })
-        .catch(() => {});
-    };
-  }, []);
+  // Progress to history on an interval and on leave: the resume point, and
+  // time actually played as the recommender's signal (see the hook).
+  useRecordWatchProgress({
+    detail: detailRef,
+    position: currentTimeRef,
+    playing: isPlayingRef,
+  });
 
   /**
    * The end: record the video as watched straight away (the server also drops
@@ -868,10 +783,14 @@ export function WatchScreen({
           .mutate({
             videoId: detail.videoId,
             channelId: detail.channelId,
-            durationWatched: Math.floor(currentTimeRef.current),
+            // The server keeps the larger of this and the recorded play time;
+            // what matters here is `completed`, which also dequeues it.
+            durationWatched: 0,
+            positionSeconds: Math.floor(currentTimeRef.current),
             completed: true,
             videoDurationSeconds: detail.durationSeconds,
             videoTitle: detail.title,
+            channelName: detail.channelName,
           })
           .catch(() => {});
       }
@@ -1465,46 +1384,8 @@ export function WatchScreen({
           })),
         };
       case "playlists":
-        return {
-          title: "Save to playlist",
-          items: [
-            ...(playlistsQuery.data ?? []).map<MenuItem>((playlist) => ({
-              key: String(playlist.id),
-              label: playlist.name,
-              selected: inPlaylist(playlist.id),
-              onPress: () => {
-                togglePlaylist(playlist.id, playlist.name);
-                return "stay";
-              },
-            })),
-            { key: "new", label: "New playlist…", submenu: "newPlaylist" },
-          ],
-        };
       case "newPlaylist":
-        return {
-          title: "New playlist",
-          content: (
-            <FocusableTextInput
-              value={newPlaylistName}
-              onChangeText={setNewPlaylistName}
-              placeholder="Playlist name"
-              hasTVPreferredFocus
-              onSubmitEditing={createPlaylist}
-              returnKeyType="done"
-              maxLength={120}
-            />
-          ),
-          items: [
-            {
-              key: "create",
-              label: "Create and save",
-              onPress: () => {
-                createPlaylist();
-                return "stay";
-              },
-            },
-          ],
-        };
+        return playlistMenu.buildPage(key) ?? { title: "", items: [] };
       default:
         return {
           title: "Settings",
@@ -1886,10 +1767,6 @@ function clampPreviewPct(pct: number): number {
 
 /** Layout width in dp of a 1080p TV panel (density 2). */
 const TV_WIDTH_DP = 960;
-
-/** How often playback position is pushed to the server, and the floor for it. */
-const PROGRESS_REPORT_MS = 15_000;
-const PROGRESS_MIN_SECONDS = 5;
 
 /** A resume point this close to the end starts the video over instead. */
 const RESUME_END_GUARD_SECONDS = 15;
@@ -2283,7 +2160,7 @@ function buildPlaybackOptions(detail: VideoDetail): PlaybackOption[] {
     addOption({
       id: "live-dash",
       label: "Live",
-      videoUrl: `${OWNTUBE_BASE_URL}/dash/${encodeURIComponent(detail.videoId)}/live.mpd`,
+      videoUrl: `${baseUrl()}/dash/${encodeURIComponent(detail.videoId)}/live.mpd`,
       kind: "auto",
     });
     if (detail.hlsUrl) {
@@ -2304,7 +2181,7 @@ function buildPlaybackOptions(detail: VideoDetail): PlaybackOption[] {
   addOption({
     id: "dash-vp9",
     label: "Auto",
-    videoUrl: `${OWNTUBE_BASE_URL}/dash/${detail.videoId}/manifest.mpd?video=vp9`,
+    videoUrl: `${baseUrl()}/dash/${detail.videoId}/manifest.mpd?video=vp9`,
     kind: "auto",
   });
 

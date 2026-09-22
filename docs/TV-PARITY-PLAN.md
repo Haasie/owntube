@@ -6,8 +6,8 @@ Status: **in progress.** Written 2026-09-22.
 |---|---|---|
 | 0 — groundwork (docs, deps, dead code) | done | `8dda771` |
 | 1 — lean-back playback (up next, queue/playlist play, continue watching) | done | `47f5bc6` |
-| 2 — player controls (quality, captions, speed, subscribe, save-to) | done | see git log |
-| 3 — browsing (home blocks, search, channels, library editing) | not started | — |
+| 2 — player controls (quality, captions, speed, subscribe, save-to) | done | `9d460ff` |
+| 3 — browsing (home blocks, search, channels, library editing) | done | see git log |
 | 4 — distribution (server URL, versioning, updates, CI) | not started | — |
 | 5 — Android TV platform (Watch Next, deep links, Send to TV) | not started | — |
 | 6 — depth (description/comments, live polish, Shorts, profiles) | not started | — |
@@ -227,6 +227,52 @@ videos.
 **Verify:** a web user's `homeBlocks` changes show up on the TV after a
 refresh; the context menu works on every card type; more than 50
 subscriptions are reachable.
+
+**As built:**
+- Home:
+  - The hero, then Continue watching, then one row per `homeBlocks` entry
+    (`components/HomeBlockRow.tsx`), with the web's defaults and options
+    (hideShorts, hideIgnored, tags, hideFinished, hideCompleted).
+  - A "playlists" block plays a playlist on OK.
+  - The footer points to the web for editing.
+- Long-press OK: react-native-tvos only reports a held select key as a
+  `longSelect` TV event (Pressable's onLongPress never fires, and the
+  release still clicks). So the focused element registers its long-press
+  action (`lib/long-press.ts`), one Shell handler runs it, and the release
+  click is swallowed.
+- The context menu (`components/CardMenu.tsx`):
+  - Items: Play, add/remove queue, save/unsave, Save to playlist, Mark
+    watched, Not interested, Don't recommend channel, Go to channel.
+  - Screen extras: move up/down and Clear queue (with a confirm page) on
+    Queue; remove and move up/down on Playlists; Remove from history.
+  - `MenuPanel` traps focus with `TVFocusGuideView`.
+  - "Save to playlist" pages are shared with the player (`lib/playlist-menu.tsx`).
+- Subscriptions:
+  - Every channel from `listDetailed`, sorted like the sidebar.
+  - A dot for uploads in the last 3 days.
+  - Long-press a channel for Open / Unsubscribe (with a confirm page).
+- Channel page:
+  - Videos, Shorts, Playlists (YouTube playlists; OK plays one through) and
+    Similar tabs.
+  - Tag chips toggle the user's existing tags. New tags are still made on
+    the web.
+- Search:
+  - Suggestions (debounced) and recent searches (on the device) as chips.
+  - A channel row (ChannelTiles).
+  - Relevance, Newest and Most viewed sorts, done on the client as on the web.
+- Saved and Trending sections. Sidebar prefs now store which sections they
+  have seen, so new sections appear once for existing installs.
+- Also in this phase:
+  - Upstream's watch-progress recorder (`lib/record-watch-progress.ts`): the
+    resume point is always sent, `durationWatched` is time actually played,
+    and `channelName` is included.
+  - `config.ts` reads the server URL at call time: groundwork for phase 4's
+    server setting.
+- Verified on the emulator: Home blocks, the card context menu (with focus
+  trap and Back), Subscriptions with dots, the channel menu and channel page
+  with tabs and tags, the Similar tab, and search with channels and sorts.
+  Not exercised: menu actions that write (to keep the real account
+  unchanged), and the suggestion chips.
 
 ## Phase 4 — distribution
 

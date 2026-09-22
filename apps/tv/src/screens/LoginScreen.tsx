@@ -8,7 +8,7 @@ import {
   type FocusableTextInputHandle,
 } from "@/components/focusable-text-input";
 import { setToken } from "@/lib/auth-token";
-import { OWNTUBE_BASE_URL } from "@/lib/config";
+import { baseUrl } from "@/lib/config";
 import { trpcClient } from "@/lib/trpc";
 import { colors, fontSize, monoFont, radius, spacing } from "@/theme";
 
@@ -89,7 +89,7 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
     setPairingState({ status: "loading" });
     try {
       const pairing = await trpcClient.auth.startDevicePairing.mutate();
-      const verificationUrl = `${OWNTUBE_BASE_URL}${pairing.verificationPath}`;
+      const verificationUrl = `${baseUrl()}${pairing.verificationPath}`;
       setPairingState({
         status: "ready",
         userCode: pairing.userCode,

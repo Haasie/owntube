@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TVFocusGuideView,
   View,
 } from "react-native";
 import { colors, focus, fontSize, radius, spacing } from "@/theme";
@@ -20,6 +21,11 @@ export type MenuItem = {
   selected?: boolean;
   /** Opens this page on top of the current one. */
   submenu?: string;
+  /**
+   * Asks first: OK opens a "Yes / Cancel" page with this question, and only
+   * "Yes" runs `onPress`. For the destructive ones (Clear queue).
+   */
+  confirm?: string;
   /**
    * Runs on OK. Choosing an option in a submenu then returns to the page
    * below, as a settings list does; return `"stay"` to keep the page open.
@@ -53,7 +59,26 @@ type Props = {
 export function MenuPanel({ buildPage, onClose }: Props) {
   const [stack, setStack] = useState<string[]>(["root"]);
   const key = stack[stack.length - 1] ?? "root";
-  const page = buildPage(key);
+  /** The item awaiting confirmation, while its confirm page shows. */
+  const [confirming, setConfirming] = useState<MenuItem | null>(null);
+  const page: MenuPage =
+    key === CONFIRM_PAGE && confirming
+      ? {
+          title: confirming.confirm ?? confirming.label,
+          items: [
+            {
+              key: "no",
+              label: "Cancel",
+              onPress: () => undefined,
+            },
+            {
+              key: "yes",
+              label: `Yes, ${confirming.label.toLowerCase()}`,
+              onPress: confirming.onPress,
+            },
+          ],
+        }
+      : buildPage(key);
   /** The page just left, so stepping back lands on the row that opened it. */
   const [cameFrom, setCameFrom] = useState<string | null>(null);
   const pop = () => {
@@ -75,8 +100,9 @@ export function MenuPanel({ buildPage, onClose }: Props) {
   }, [onClose]);
 
   const choose = (item: MenuItem) => {
-    if (item.submenu) {
-      const submenu = item.submenu;
+    if (item.submenu || (item.confirm && key !== CONFIRM_PAGE)) {
+      const submenu = item.submenu ?? CONFIRM_PAGE;
+      if (item.confirm) setConfirming(item);
       setCameFrom(null);
       setStack((s) => [...s, submenu]);
       return;
@@ -102,8 +128,18 @@ export function MenuPanel({ buildPage, onClose }: Props) {
 
   return (
     <View style={styles.scrim}>
-      <View style={styles.panel}>
-        <Text style={styles.title}>{page.title}</Text>
+      {/* Traps the D-pad inside the panel: it can open over a live screen
+          (the card menu), whose buttons would otherwise take focus. */}
+      <TVFocusGuideView
+        style={styles.panel}
+        trapFocusUp
+        trapFocusDown
+        trapFocusLeft
+        trapFocusRight
+      >
+        <Text style={styles.title} numberOfLines={2}>
+          {page.title}
+        </Text>
         {page.content}
         {/* Keyed by page so each page mounts fresh and takes focus. */}
         <ScrollView key={key} contentContainerStyle={styles.list}>
@@ -116,7 +152,7 @@ export function MenuPanel({ buildPage, onClose }: Props) {
             />
           ))}
         </ScrollView>
-      </View>
+      </TVFocusGuideView>
     </View>
   );
 }
@@ -164,6 +200,7 @@ function MenuRow({
 }
 
 const PANEL_WIDTH = 380;
+const CONFIRM_PAGE = "__confirm";
 
 const styles = StyleSheet.create({
   scrim: {

@@ -21,6 +21,8 @@ const THUMBNAIL_HEIGHT = 148;
 type Props = {
   video: UnifiedVideo;
   onPress: (videoId: string) => void;
+  /** Long-press OK: the card's context menu. */
+  onLongPress?: (video: UnifiedVideo) => void;
   hasTVPreferredFocus?: boolean;
   /** Position in the parent row, passed back through `onFocusChange`. */
   index?: number;
@@ -36,6 +38,7 @@ type Props = {
 export const VideoCard = memo(function VideoCard({
   video,
   onPress,
+  onLongPress,
   hasTVPreferredFocus,
   index = 0,
   onFocusChange,
@@ -62,6 +65,7 @@ export const VideoCard = memo(function VideoCard({
         onFocusChange?.(false, index);
       }}
       onPress={() => onPress(video.videoId)}
+      onLongPress={onLongPress ? () => onLongPress(video) : undefined}
       style={[styles.card, focused && styles.cardFocused]}
     >
       <View style={styles.thumbWrap}>
