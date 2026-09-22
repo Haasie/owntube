@@ -8,8 +8,8 @@ Status: **in progress.** Written 2026-09-22.
 | 1 — lean-back playback (up next, queue/playlist play, continue watching) | done | `47f5bc6` |
 | 2 — player controls (quality, captions, speed, subscribe, save-to) | done | `9d460ff` |
 | 3 — browsing (home blocks, search, channels, library editing) | done | `61a2d66` |
-| 4 — distribution (server URL, versioning, updates, CI) | done | see git log |
-| 5 — Android TV platform (Watch Next, deep links, Send to TV) | not started | — |
+| 4 — distribution (server URL, versioning, updates, CI) | done (CI dropped) | `9c9dadf` |
+| 5 — Android TV platform (Watch Next, deep links, Send to TV) | done | see git log |
 | 6 — depth (description/comments, live polish, Shorts, profiles) | not started | — |
 
 Already shipped before this plan: device pairing, session-expiry → sign-in
@@ -358,6 +358,38 @@ native module, following the pattern of `plugins/with-tv-search.js`.
     use SSE if the tRPC setup allows it. Open the video with its context.
   - Web: a "Play on TV" button on `/watch` when the user has a paired device.
   - This is the only phase-5 item that needs backend work.
+
+**As built:**
+- Deep links: `lib/deep-links.ts`.
+  - Handles `owntube://watch|channel|search`, plus YouTube
+    watch / shorts / live / embed / youtu.be / playlist / channel / @handle /
+    c / user / results URLs, with `t` given as seconds, `90s` or `1m30s`.
+  - `app.json` intentFilters register youtube.com, m./www./music.youtube.com
+    and youtu.be, so the TV shows up in "Open with".
+  - A playlist link plays the playlist through.
+- Watch Next: a local Expo module (`modules/watch-next`, Kotlin,
+  androidx.tvprovider).
+  - On leaving a video between 3 % and 95 % it upserts a `WATCH_NEXT_TYPE_CONTINUE`
+    program keyed by video id, whose intent is `owntube://watch?v=…`.
+  - On playToEnd, or past 95 %, it removes the program.
+- The optional home-screen "Subscriptions" channel was skipped.
+- MediaSession metadata: title, channel and artwork go in expo-video's
+  `metadata` on every source.
+- Send to TV:
+  - Server: `server/tv-remote.ts` and the `tvRemote` router. An in-memory
+    registry per user: TVs poll every 2.5 s (`tvRemote.poll`) with an id they
+    generate and keep on the device, since device tokens carry no device id.
+    The poll marks the TV present for 30 s and collects a pending video.
+  - Web: a "Play on <TV>" pill on the watch page's action row. It sends the
+    current position and pauses the page's player.
+- Verified on the emulator:
+  - A youtu.be link with `t=90` opened the video at 1:30.
+  - The media session showed the title and channel.
+  - The half-watched video appeared in the launcher's Play Next row.
+  - A send through `tvRemote.sendToDevice` opened the video at 0:30 on the
+    TV.
+- Not verified: the web button in a browser; its call was exercised
+  directly instead.
 
 ## Phase 6 — depth
 

@@ -69,6 +69,7 @@ import {
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
 import { colors, focus, fontSize, monoFont, radius, spacing } from "@/theme";
+import { removeWatchNext, upsertWatchNext } from "../../modules/watch-next";
 
 // Used only when settings fail to load; mirrors the web's
 // DEFAULT_SPONSORBLOCK_CATEGORIES (a runtime import would bundle zod).
@@ -599,9 +600,19 @@ export function WatchScreen({
     if (!selectedOption) return;
 
     selectedOptionRef.current = selectedOption;
+    // Shown on the system's now-playing card and to the Assistant.
+    const metadata = {
+      title: state.detail.title,
+      artist: state.detail.channelName,
+      artwork: state.detail.thumbnailUrl,
+    };
     if (selectedOption.kind === "split") {
       player.muted = true;
-      player.replace({ uri: selectedOption.videoUrl, headers: authHeader });
+      player.replace({
+        uri: selectedOption.videoUrl,
+        headers: authHeader,
+        metadata,
+      });
       audioPlayer.replace(selectedOption.audioUrl);
     } else {
       // A non-default audio language narrows the server DASH manifest to that
@@ -619,7 +630,7 @@ export function WatchScreen({
         if (Number.isFinite(cap)) uri = `${uri}&maxHeight=${cap}`;
       }
       player.muted = false;
-      player.replace({ uri, headers: authHeader });
+      player.replace({ uri, headers: authHeader, metadata });
       audioPlayer.pause();
       audioPlayer.replace(null);
     }
@@ -763,6 +774,33 @@ export function WatchScreen({
     return () => sub.remove();
   }, []);
 
+  // The Android TV home screen's Continue watching row: a video left part
+  // way through goes in (opening it resumes via owntube://watch), and one
+  // watched to the end comes out.
+  useEffect(
+    () => () => {
+      const detail = detailRef.current;
+      if (!detail || detail.isLive) return;
+      const duration = detail.durationSeconds ?? 0;
+      const position = currentTimeRef.current;
+      if (duration <= 0) return;
+      const fraction = position / duration;
+      if (fraction >= WATCH_NEXT_DONE_FRACTION) {
+        removeWatchNext(detail.videoId);
+      } else if (fraction >= WATCH_NEXT_MIN_FRACTION) {
+        upsertWatchNext({
+          videoId: detail.videoId,
+          title: detail.title,
+          channelName: detail.channelName,
+          posterUrl: detail.thumbnailUrl,
+          positionMs: Math.floor(position * 1000),
+          durationMs: Math.floor(duration * 1000),
+        });
+      }
+    },
+    [],
+  );
+
   // Progress to history on an interval and on leave: the resume point, and
   // time actually played as the recommender's signal (see the hook).
   useRecordWatchProgress({
@@ -794,10 +832,11 @@ export function WatchScreen({
           })
           .catch(() => {});
       }
+      removeWatchNext(videoId);
       setEnded(true);
     });
     return () => sub.remove();
-  }, [player]);
+  }, [player, videoId]);
 
   const fallbackToStablePlayback = useCallback(() => {
     if (state.status !== "ready") return;
@@ -1767,6 +1806,10 @@ function clampPreviewPct(pct: number): number {
 
 /** Layout width in dp of a 1080p TV panel (density 2). */
 const TV_WIDTH_DP = 960;
+
+/** Watch Next row bounds: worth resuming, and as good as finished. */
+const WATCH_NEXT_MIN_FRACTION = 0.03;
+const WATCH_NEXT_DONE_FRACTION = 0.95;
 
 /** A resume point this close to the end starts the video over instead. */
 const RESUME_END_GUARD_SECONDS = 15;

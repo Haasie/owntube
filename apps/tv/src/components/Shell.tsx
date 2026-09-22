@@ -7,9 +7,12 @@ import {
   type Section,
   Sidebar,
 } from "@/components/Sidebar";
+import { parseDeepLink } from "@/lib/deep-links";
 import { useLongSelectDispatcher } from "@/lib/long-press";
 import type { Nav, OpenVideoOptions, PlayContext } from "@/lib/navigation";
 import { loadSidebarPrefs } from "@/lib/sidebar-prefs";
+import { trpcClient } from "@/lib/trpc";
+import { useTvRemoteReceiver } from "@/lib/tv-remote";
 import { useResumeLookup, useWatchProgressRefresh } from "@/lib/watch-progress";
 import { ChannelScreen } from "@/screens/ChannelScreen";
 import { HistoryScreen } from "@/screens/HistoryScreen";
@@ -131,19 +134,66 @@ export function Shell({
   }, [refreshProgress]);
 
   /**
-   * System voice search arrives as `owntube://search?q=…` — MainActivity
-   * rewrites Android's ACTION_SEARCH into that URL (see plugins/with-tv-search)
-   * because React Native surfaces deep links but not intent extras.
+   * A video arriving from outside (a deep link, Play on TV) replaces the one
+   * playing, or opens over whatever is on screen.
    */
+  const topRef = useRef(top);
+  topRef.current = top;
+  const playFromOutside = useCallback(
+    (videoId: string, resumeSeconds?: number) => {
+      if (topRef.current?.name === "watch") {
+        replaceVideo(videoId, { resumeSeconds });
+      } else {
+        nav.openVideo(videoId, { resumeSeconds });
+      }
+    },
+    [nav, replaceVideo],
+  );
+  useTvRemoteReceiver(playFromOutside);
+
+  /**
+   * Deep links: owntube:// URLs (the Android TV home screen's Watch Next row,
+   * system voice search — MainActivity rewrites ACTION_SEARCH into
+   * `owntube://search?q=…`, see plugins/with-tv-search) and the YouTube URLs
+   * the "Open with" chooser hands over. See lib/deep-links.
+   */
+  const handleLinkRef = useRef<(url: string | null) => void>(() => {});
+  handleLinkRef.current = (url: string | null) => {
+    const link = url ? parseDeepLink(url) : null;
+    if (!link) return;
+    switch (link.kind) {
+      case "search":
+        setSearchQuery(link.query);
+        setSection("search");
+        setStack([]);
+        return;
+      case "watch":
+        playFromOutside(link.videoId, link.startSeconds);
+        return;
+      case "channel":
+        nav.openChannel(link.channelId);
+        return;
+      case "playlist":
+        trpcClient.channel.ytPlaylist
+          .query({ playlistId: link.playlistId })
+          .then((playlist) => {
+            const first = playlist.videos[0];
+            if (!first) return;
+            nav.openVideo(first.videoId, {
+              context: {
+                source: "playlist",
+                label: playlist.title,
+                videos: playlist.videos,
+              },
+            });
+          })
+          .catch(() => {});
+        return;
+    }
+  };
+  // Once: the launch URL must not be handled again on a re-render.
   useEffect(() => {
-    const handle = (url: string | null) => {
-      if (!url) return;
-      const match = /^owntube:\/\/search\?q=(.*)$/.exec(url);
-      if (!match) return;
-      setSearchQuery(decodeURIComponent(match[1] ?? ""));
-      setSection("search");
-      setStack([]);
-    };
+    const handle = (url: string | null) => handleLinkRef.current(url);
     Linking.getInitialURL()
       .then(handle)
       .catch(() => {});

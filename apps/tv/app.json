@@ -9,7 +9,47 @@
     "android": {
       "package": "com.mdbraber.owntube.tv",
       "icon": "./assets/icon.png",
-      "versionCode": 2
+      "versionCode": 2,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [
+            {
+              "scheme": "https",
+              "host": "www.youtube.com"
+            },
+            {
+              "scheme": "https",
+              "host": "youtube.com"
+            },
+            {
+              "scheme": "https",
+              "host": "m.youtube.com"
+            },
+            {
+              "scheme": "https",
+              "host": "music.youtube.com"
+            },
+            {
+              "scheme": "https",
+              "host": "youtu.be"
+            },
+            {
+              "scheme": "http",
+              "host": "www.youtube.com"
+            },
+            {
+              "scheme": "http",
+              "host": "youtube.com"
+            },
+            {
+              "scheme": "http",
+              "host": "youtu.be"
+            }
+          ]
+        }
+      ]
     },
     "plugins": [
       [
