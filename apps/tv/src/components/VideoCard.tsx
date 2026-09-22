@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import type { UnifiedVideo } from "@web/server/services/proxy.types";
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import {
   channelInitial,
@@ -21,14 +21,22 @@ type Props = {
   video: UnifiedVideo;
   onPress: (videoId: string) => void;
   hasTVPreferredFocus?: boolean;
+  /** Position in the parent row, passed back through `onFocusChange`. */
+  index?: number;
   /** Lets a parent react to focus, e.g. to scroll the card into view. */
-  onFocusChange?: (focused: boolean) => void;
+  onFocusChange?: (focused: boolean, index: number) => void;
 };
 
-export function VideoCard({
+/**
+ * Memoized: rows hold dozens of cards, and without it every parent render
+ * (a page loading, the player's clock) re-rendered all of them. Parents pass
+ * stable callbacks so the props compare equal.
+ */
+export const VideoCard = memo(function VideoCard({
   video,
   onPress,
   hasTVPreferredFocus,
+  index = 0,
   onFocusChange,
 }: Props) {
   const [focused, setFocused] = useState(false);
@@ -46,11 +54,11 @@ export function VideoCard({
       hasTVPreferredFocus={hasTVPreferredFocus}
       onFocus={() => {
         setFocused(true);
-        onFocusChange?.(true);
+        onFocusChange?.(true, index);
       }}
       onBlur={() => {
         setFocused(false);
-        onFocusChange?.(false);
+        onFocusChange?.(false, index);
       }}
       onPress={() => onPress(video.videoId)}
       style={[styles.card, focused && styles.cardFocused]}
@@ -61,6 +69,9 @@ export function VideoCard({
             source={{ uri: video.thumbnailUrl }}
             style={styles.thumb}
             resizeMode="cover"
+            // Decode at view size: Android otherwise keeps the full upstream
+            // bitmap (up to 1280x720) per card, which churns memory and GC.
+            resizeMethod="resize"
           />
         ) : (
           <View style={[styles.thumb, styles.thumbPlaceholder]} />
@@ -130,7 +141,7 @@ export function VideoCard({
       </View>
     </Pressable>
   );
-}
+});
 
 function ChannelAvatar({
   imageUrl,
@@ -140,7 +151,13 @@ function ChannelAvatar({
   channelName?: string;
 }) {
   if (imageUrl) {
-    return <Image source={{ uri: imageUrl }} style={styles.avatar} />;
+    return (
+      <Image
+        source={{ uri: imageUrl }}
+        style={styles.avatar}
+        resizeMethod="resize"
+      />
+    );
   }
   return (
     <View style={[styles.avatar, styles.avatarFallback]}>

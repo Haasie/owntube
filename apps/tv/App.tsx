@@ -4,6 +4,7 @@ import { ActivityIndicator, SafeAreaView, StyleSheet } from "react-native";
 import { Shell } from "@/components/Shell";
 import { clearToken, getToken, onSessionExpired } from "@/lib/auth-token";
 import { TrpcProvider } from "@/lib/trpc-react";
+import { WatchProgressProvider } from "@/lib/watch-progress";
 import { LoginScreen } from "@/screens/LoginScreen";
 import { colors } from "@/theme";
 
@@ -33,7 +34,9 @@ export default function App() {
             color={colors.brand}
           />
         ) : auth === "signedIn" ? (
-          <Shell onSignOut={signOut} />
+          <WatchProgressProvider>
+            <Shell onSignOut={signOut} />
+          </WatchProgressProvider>
         ) : (
           <LoginScreen onLoggedIn={() => setAuth("signedIn")} />
         )}

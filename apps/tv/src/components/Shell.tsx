@@ -44,12 +44,11 @@ export function Shell({ onSignOut }: { onSignOut: () => void }) {
   const onSidebarExpanded = useCallback(
     (expanded: boolean) => {
       // One value drives both the rail's width and the content's inset, so
-      // they can never be mid-animation at different widths.
-      Animated.timing(contentInset, {
-        toValue: expanded ? EXPANDED_WIDTH : RAIL_WIDTH,
-        duration: 140,
-        useNativeDriver: false,
-      }).start();
+      // they can never be at different widths. It jumps rather than animates:
+      // a margin can't run on the native driver, and tweening it relaid out
+      // the whole screen (every mounted shelf and card) on each frame, which
+      // stalled the JS thread and made the D-pad feel sticky at the rail.
+      contentInset.setValue(expanded ? EXPANDED_WIDTH : RAIL_WIDTH);
     },
     [contentInset],
   );
