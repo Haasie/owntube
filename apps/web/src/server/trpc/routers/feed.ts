@@ -6,6 +6,7 @@ import { watchHistory } from "@/server/db/schema";
 import { RateLimitExceededError } from "@/server/errors/rate-limit-exceeded";
 import { UpstreamUnavailableError } from "@/server/errors/upstream-unavailable";
 import { getPersonalizedFeedVideos } from "@/server/recommendation/engine";
+import { settlePoolBuild } from "@/server/recommendation/pool-invalidation";
 import { trendingTailRelevance } from "@/server/recommendation/scoring";
 import {
   collectUserSignals,
@@ -25,6 +26,7 @@ import {
   type TrendingTailCacheEntry,
   trendingTailPoolCache,
   trendingTailPoolInFlight,
+  trendingTailPoolInvalidation,
 } from "@/server/recommendation/trending-tail-cache";
 import { fetchTrendingVideos } from "@/server/services/proxy";
 import {
@@ -189,6 +191,7 @@ async function buildTrendingTailPool(
     const entry = await inFlight;
     if (entry.expiresAt > Date.now()) return entry.pool;
   }
+  const stillCurrent = trendingTailPoolInvalidation.snapshot(userId);
   const task = (async (): Promise<TrendingTailCacheEntry> => {
     const pool = await buildTrendingTailPoolUncached(
       db,
@@ -201,15 +204,13 @@ async function buildTrendingTailPool(
       pool,
     };
   })();
-  trendingTailPoolInFlight.set(cacheKey, task);
-  const settled = task
-    .then((entry) => {
-      trendingTailPoolCache.set(cacheKey, entry);
-      return entry;
-    })
-    .finally(() => {
-      trendingTailPoolInFlight.delete(cacheKey);
-    });
+  const settled = settlePoolBuild(
+    task,
+    cacheKey,
+    trendingTailPoolCache,
+    trendingTailPoolInFlight,
+    stillCurrent,
+  );
   // Stale-while-revalidate, same as the recommendation pool: an expired tail is
   // served instantly and the refresh lands in the background.
   if (cached) {
