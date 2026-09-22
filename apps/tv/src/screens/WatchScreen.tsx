@@ -1,4 +1,7 @@
-import type { SponsorBlockSegment } from "@web/lib/sponsorblock";
+import type {
+  SponsorBlockCategory,
+  SponsorBlockSegment,
+} from "@web/lib/sponsorblock";
 import {
   chapterIndexAt,
   parseChaptersFromDescription,
@@ -36,22 +39,24 @@ import {
 } from "@/lib/audio-languages";
 import { getToken } from "@/lib/auth-token";
 import { OWNTUBE_BASE_URL } from "@/lib/config";
+import { errorMessage } from "@/lib/error-message";
 import { channelInitial, formatTime, formatViews } from "@/lib/format";
 import { queryClient } from "@/lib/query-client";
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
-import { errorMessage } from "@/lib/use-query";
 import { colors, focus, fontSize, monoFont, radius, spacing } from "@/theme";
 
-// Skip-type categories auto-skipped on TV (filler excluded — too aggressive).
-const SKIP_CATEGORIES = [
+// Used only when settings fail to load; mirrors the web's
+// DEFAULT_SPONSORBLOCK_CATEGORIES (a runtime import would bundle zod).
+const DEFAULT_SKIP_CATEGORIES: SponsorBlockCategory[] = [
   "sponsor",
   "selfpromo",
+  "interaction",
   "intro",
   "outro",
-  "interaction",
   "preview",
-] as const;
+  "hook",
+];
 
 type LoadState =
   | { status: "loading" }
@@ -103,15 +108,16 @@ function heightForQuality(quality: string | undefined): number {
 /**
  * Picks the stream to start with.
  *
- * HLS ("Auto") wins whenever the server offers it: it is a single media source
- * that adapts up to 1080p, so ExoPlayer keeps audio and video in sync itself.
+ * The adaptive "Auto" source (server DASH, listed first) wins whenever the
+ * server offers it: it is a single media source that adapts across renditions,
+ * so ExoPlayer keeps audio and video in sync itself.
  *
  * Everything else is a compromise. YouTube's muxed (video+audio) progressive
  * streams stop at 360p; every higher rendition is adaptive and arrives as a
  * separate video-only + audio pair, which this screen plays as two ExoPlayer
  * instances nudged into alignment. Two players drift, and correcting drift by
  * seeking the audio player is audible — sound drops out and returns out of
- * step. So without HLS we take the best muxed stream and accept 360p rather
+ * step. So without Auto we take the best muxed stream and accept 360p rather
  * than ship broken audio; split sources are a last resort when nothing muxed
  * exists.
  */
@@ -231,10 +237,12 @@ export function WatchScreen({
     maxHeight: number;
     sponsorBlockEnabled: boolean;
     sponsorBlockAutoSkip: boolean;
+    sponsorBlockCategories: SponsorBlockCategory[];
   }>({
     maxHeight: DEFAULT_HEIGHT,
     sponsorBlockEnabled: true,
     sponsorBlockAutoSkip: true,
+    sponsorBlockCategories: DEFAULT_SKIP_CATEGORIES,
   });
   const scrubRef = useRef<number | null>(null);
   const holdTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -335,6 +343,7 @@ export function WatchScreen({
           maxHeight: heightForQuality(st.defaultPlaybackQuality),
           sponsorBlockEnabled: st.sponsorBlockEnabled,
           sponsorBlockAutoSkip: st.sponsorBlockAutoSkip,
+          sponsorBlockCategories: st.sponsorBlockCategories,
         };
       })
       // Defaults already sit in the ref; a settings failure shouldn't block play.
@@ -367,14 +376,16 @@ export function WatchScreen({
           ),
         });
 
-        if (!settingsRef.current.sponsorBlockEnabled) return;
+        const { sponsorBlockEnabled, sponsorBlockCategories: categories } =
+          settingsRef.current;
+        if (!sponsorBlockEnabled || categories.length === 0) return;
         queryClient
           .fetchQuery({
-            queryKey: [["sponsorblock", "segments"], { videoId }],
+            queryKey: [["sponsorblock", "segments"], { videoId, categories }],
             queryFn: () =>
               trpcClient.sponsorblock.segments.query({
                 videoId,
-                categories: [...SKIP_CATEGORIES],
+                categories,
                 durationSeconds: detail.durationSeconds,
               }),
           })

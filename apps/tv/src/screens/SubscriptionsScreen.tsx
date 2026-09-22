@@ -10,12 +10,12 @@ import {
   View,
 } from "react-native";
 import { CarouselFeed } from "@/components/CarouselFeed";
+import { errorMessage } from "@/lib/error-message";
 import { channelInitial } from "@/lib/format";
 import type { Nav } from "@/lib/navigation";
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
 import { useInfiniteFeed } from "@/lib/use-infinite-feed";
-import { errorMessage } from "@/lib/use-query";
 import { colors, focus, fontSize, radius, spacing } from "@/theme";
 
 /** Server caps listSidebar at 50; asking for more is a validation error. */

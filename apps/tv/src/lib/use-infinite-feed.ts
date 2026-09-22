@@ -1,7 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import type { UnifiedVideo } from "@web/server/services/proxy.types";
 import { useMemo } from "react";
-import { errorMessage } from "@/lib/use-query";
+import { errorMessage } from "@/lib/error-message";
 
 /** One fetched page: the videos plus the cursor for the next page (or none). */
 export type FeedPage<C> = { items: UnifiedVideo[]; next: C | undefined };

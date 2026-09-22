@@ -9,10 +9,10 @@ import {
 } from "react-native";
 import { FocusButton } from "@/components/FocusButton";
 import type { Section } from "@/components/Sidebar";
+import { errorMessage } from "@/lib/error-message";
 import { queryClient } from "@/lib/query-client";
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
-import { errorMessage } from "@/lib/use-query";
 import { SidebarSettingsScreen } from "@/screens/SidebarSettingsScreen";
 import { colors, fontSize, radius, spacing } from "@/theme";
 

@@ -67,9 +67,11 @@ function QrMatrix({ modules }: { modules: QrModules }) {
 }
 
 /**
- * V1 TV login: email + password typed on the remote's virtual keyboard, calls
- * the `auth.deviceLogin` procedure, and stores the returned device JWT. A
- * device-pairing flow (TV shows a code, confirm from phone) replaces this later.
+ * TV sign-in. Device pairing is the main path: the TV shows a code and QR
+ * (`auth.startDevicePairing`), polls `auth.pollDevicePairing` until the user
+ * confirms on another device, and replaces an expired code automatically.
+ * Email + password on the remote's keyboard (`auth.deviceLogin`) remains as a
+ * fallback. Either way the returned device JWT is stored.
  */
 export function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [email, setEmail] = useState("");

@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { FlatList, StyleSheet, Text, View } from "react-native";
 import { CarouselFeed } from "@/components/CarouselFeed";
 import { FocusButton } from "@/components/FocusButton";
+import { errorMessage } from "@/lib/error-message";
 import type { Nav } from "@/lib/navigation";
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
 import { useInfiniteFeed } from "@/lib/use-infinite-feed";
-import { errorMessage } from "@/lib/use-query";
 import { colors, fontSize, spacing } from "@/theme";
 
 const PANE_WIDTH = 220;
