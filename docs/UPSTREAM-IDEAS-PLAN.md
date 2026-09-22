@@ -35,7 +35,7 @@ on `upstream/main` (`git show upstream/main:apps/tv/src/…`).
 
 | idea | upstream source | our phase | state |
 |---|---|---|---|
-| Keep visited screens mounted (focus + scroll survive Back; player stays mounted under a channel page, paused via an `active` prop) | `components/Shell.tsx` (`ScreenLayer`, `TVFocusGuideView`) | 3 | **not started** — biggest feel win |
+| Keep visited screens mounted (focus + scroll survive Back; player stays mounted under a channel page, paused via an `active` prop) | `components/Shell.tsx` (`ScreenLayer`, `TVFocusGuideView`) | 3 | **done** — `Shell.tsx` layers + `lib/screen-active.tsx`; Shorts and Settings still mount only while shown |
 | Recent searches + suggestion chips | `lib/recent-searches.ts`, `screens/SearchScreen.tsx` | 3 | in progress (uncommitted phase 3) |
 | Server URL set on the device, no rebuild | `lib/config.ts` (placeholder origin rewritten in a `fetch` wrapper, URL in SecureStore) | 4 | in progress (`ServerScreen`, uncommitted) |
 | Hero thumbnail fallback maxres → hq720 → hq on `onError` | `lib/hero-thumbnail-url.ts`, `components/HomeHero.tsx` | 3 | not started — ~40 lines |

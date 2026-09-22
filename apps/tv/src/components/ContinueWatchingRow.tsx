@@ -2,6 +2,7 @@ import type { UnifiedVideo } from "@web/server/services/proxy.types";
 import { useMemo } from "react";
 import { VideoRow } from "@/components/VideoRow";
 import type { Nav } from "@/lib/navigation";
+import { useScreenActive } from "@/lib/screen-active";
 import { trpc } from "@/lib/trpc-react";
 import { useInProgressIds } from "@/lib/watch-progress";
 
@@ -18,7 +19,7 @@ export function ContinueWatchingRow({ nav }: { nav: Nav }) {
   const inProgress = useInProgressIds();
   const history = trpc.history.list.useQuery(
     { page: 1, pageSize: HISTORY_SCAN, hideWatched: true },
-    { retry: 1 },
+    { retry: 1, subscribed: useScreenActive() },
   );
 
   const videos = useMemo(() => {

@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import { VideoRow } from "@/components/VideoRow";
 import type { Nav, PlayContext } from "@/lib/navigation";
 import { playAllStart } from "@/lib/play-all";
+import { useScreenActive } from "@/lib/screen-active";
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
 import { useProgressLookup } from "@/lib/watch-progress";
@@ -61,6 +62,8 @@ export function HomeBlockRow({
 }) {
   const progress = useProgressLookup();
   const { type } = block;
+  // Kept mounted while Home is hidden: stop listening, refetch stale on return.
+  const subscribed = useScreenActive();
 
   const subscriptions = trpc.subscriptions.mergedFeedInfinite.useQuery(
     {
@@ -69,15 +72,15 @@ export function HomeBlockRow({
       hideIgnored: option(block, "hideIgnored", true),
       ...tagFilters(block),
     },
-    { enabled: type === "subscriptions" },
+    { enabled: type === "subscriptions", subscribed },
   );
   const recommended = trpc.feed.home.useQuery(
     { page: 1, pageSize: ROW_VIDEOS, region },
-    { enabled: type === "recommended" },
+    { enabled: type === "recommended", subscribed },
   );
   const explore = trpc.trending.list.useQuery(
     { region, limit: ROW_VIDEOS },
-    { enabled: type === "explore" },
+    { enabled: type === "explore", subscribed },
   );
   const history = trpc.history.list.useQuery(
     {
@@ -85,21 +88,24 @@ export function HomeBlockRow({
       pageSize: ROW_VIDEOS,
       hideWatched: option(block, "hideCompleted", false),
     },
-    { enabled: type === "history" },
+    { enabled: type === "history", subscribed },
   );
   const queue = trpc.queue.listDetailed.useQuery(undefined, {
     enabled: type === "queue",
+    subscribed,
   });
   const saved = trpc.interactions.listSaved.useQuery(undefined, {
     enabled: type === "saved",
+    subscribed,
   });
   const playlistId = block.playlistId ?? 0;
   const playlistItems = trpc.playlists.itemsDetailed.useQuery(
     { playlistId },
-    { enabled: type === "playlist" && playlistId > 0 },
+    { enabled: type === "playlist" && playlistId > 0, subscribed },
   );
   const playlists = trpc.playlists.list.useQuery(undefined, {
     enabled: type === "playlists" || type === "playlist",
+    subscribed,
   });
 
   const videos: UnifiedVideo[] = useMemo(() => {

@@ -1,7 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BackHandler,
   FlatList,
   Image,
   Pressable,
@@ -17,6 +16,7 @@ import { channelInitial } from "@/lib/format";
 import { setLongPressTarget, takeSuppressedPress } from "@/lib/long-press";
 import type { Nav } from "@/lib/navigation";
 import { queryClient } from "@/lib/query-client";
+import { useActiveBackHandler } from "@/lib/screen-active";
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
 import { useInfiniteFeed } from "@/lib/use-infinite-feed";
@@ -112,14 +112,11 @@ export function SubscriptionsScreen({ nav }: { nav: Nav }) {
 
   // Back leaves the tag submenu before it leaves Subscriptions, matching the
   // player's controls-then-video order.
-  useEffect(() => {
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (level !== "tags") return false;
-      setLevel("root");
-      return true;
-    });
-    return () => sub.remove();
-  }, [level]);
+  useActiveBackHandler(() => {
+    if (level !== "tags") return false;
+    setLevel("root");
+    return true;
+  });
 
   // Drop a pending selection if the screen goes away mid-debounce.
   useEffect(

@@ -10,6 +10,7 @@ import { HomeBlockRow } from "@/components/HomeBlockRow";
 import { HomeHero } from "@/components/HomeHero";
 import { baseUrl } from "@/lib/config";
 import type { Nav } from "@/lib/navigation";
+import { useScreenActive } from "@/lib/screen-active";
 import { trpc } from "@/lib/trpc-react";
 import { colors, fontSize, spacing } from "@/theme";
 
@@ -20,9 +21,14 @@ import { colors, fontSize, spacing } from "@/theme";
  * stays the editor; the footer says where.
  */
 export function HomeScreen({ nav }: { nav: Nav }) {
-  const settings = trpc.settings.get.useQuery();
+  // Kept mounted while hidden: stop listening, refetch stale data on return.
+  const subscribed = useScreenActive();
+  const settings = trpc.settings.get.useQuery(undefined, { subscribed });
   const region = settings.data?.trendingRegion ?? "US";
-  const top = trpc.feed.home.useQuery({ page: 1, pageSize: 12, region });
+  const top = trpc.feed.home.useQuery(
+    { page: 1, pageSize: 12, region },
+    { subscribed },
+  );
 
   const heroVideo = top.data?.videos[0];
   const personalized =

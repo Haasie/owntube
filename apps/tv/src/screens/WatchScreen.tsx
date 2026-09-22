@@ -15,7 +15,7 @@ import type {
   VideoDetail,
   VideoStoryboard,
 } from "@web/server/services/proxy.types";
-import { useKeepAwake } from "expo-keep-awake";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useVideoPlayer, type VideoPlayer, VideoView } from "expo-video";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -237,6 +237,7 @@ export function WatchScreen({
   onReplaceVideo,
   onOpenChannel,
   onBack,
+  active = true,
 }: {
   videoId: string;
   resumeSeconds?: number;
@@ -246,10 +247,26 @@ export function WatchScreen({
   onReplaceVideo: (videoId: string, options?: OpenVideoOptions) => void;
   onOpenChannel: (channelId: string) => void;
   onBack: () => void;
+  /**
+   * False while a channel page sits on top: the shell keeps the player
+   * mounted (so Back returns to the same spot without reloading) but it must
+   * be paused and ignore the remote.
+   */
+  active?: boolean;
 }) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
   // Android TV drops into its screensaver on ~5 minutes without input, and a
-  // playing video is not input. Hold the screen on for the whole screen.
-  useKeepAwake();
+  // playing video is not input. Hold the screen on while the player is shown.
+  useEffect(() => {
+    if (!active) return;
+    const tag = `watch:${videoId}`;
+    void activateKeepAwakeAsync(tag);
+    return () => {
+      void deactivateKeepAwake(tag);
+    };
+  }, [active, videoId]);
 
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [isPlaying, setIsPlaying] = useState(true);
@@ -814,6 +831,8 @@ export function WatchScreen({
    */
   useEffect(() => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      // In the background (under a channel page): Back belongs to the shell.
+      if (!activeRef.current) return false;
       if (showUpNextRef.current) {
         setEnded(false);
         return true;
@@ -982,12 +1001,31 @@ export function WatchScreen({
     const sub = player.addListener(
       "playingChange",
       ({ isPlaying: playing }) => {
+        // The MediaSession still owns the hardware Play/Pause key while the
+        // player sits behind a channel page; don't let it resume there.
+        if (playing && !activeRef.current) {
+          player.pause();
+          audioPlayer.pause();
+          return;
+        }
         setIsPlaying(playing);
         revealControls();
       },
     );
     return () => sub.remove();
-  }, [player, revealControls]);
+  }, [player, audioPlayer, revealControls]);
+
+  // Sent to the background (a channel page opened on top): pause, and close
+  // any panel so its own Back handler can't claim presses meant for the page.
+  // Coming back leaves it paused with the controls up, ready for OK.
+  useEffect(() => {
+    if (active) return;
+    player.pause();
+    audioPlayer.pause();
+    setIsPlaying(false);
+    setMenuOpen(false);
+    setDetailsOpen(false);
+  }, [active, player, audioPlayer]);
 
   // Any remote key re-shows the controls (fires regardless of focus target).
   // While paused the overlay stays pinned; while playing it auto-hides.
@@ -1146,6 +1184,7 @@ export function WatchScreen({
    * this the remote's play/pause does nothing.
    */
   useTVEventHandler((event) => {
+    if (!activeRef.current) return;
     if (event.eventType === "focus" || event.eventType === "blur") return;
     // The up-next card and the settings panel own the screen; their buttons
     // take the D-pad.
