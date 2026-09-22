@@ -2,7 +2,7 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, SafeAreaView, StyleSheet } from "react-native";
 import { Shell } from "@/components/Shell";
-import { clearToken, getToken } from "@/lib/auth-token";
+import { clearToken, getToken, onSessionExpired } from "@/lib/auth-token";
 import { TrpcProvider } from "@/lib/trpc-react";
 import { LoginScreen } from "@/screens/LoginScreen";
 import { colors } from "@/theme";
@@ -15,6 +15,8 @@ export default function App() {
   useEffect(() => {
     getToken().then((token) => setAuth(token ? "signedIn" : "signedOut"));
   }, []);
+
+  useEffect(() => onSessionExpired(() => setAuth("signedOut")), []);
 
   const signOut = () => {
     clearToken().then(() => setAuth("signedOut"));

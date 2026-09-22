@@ -5,9 +5,10 @@ import {
   useSpeechRecognitionEvent,
 } from "expo-speech-recognition";
 import { useEffect, useState } from "react";
-import { StyleSheet, TextInput, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { CarouselFeed } from "@/components/CarouselFeed";
 import { FocusButton } from "@/components/FocusButton";
+import { FocusableTextInput } from "@/components/focusable-text-input";
 import type { Nav } from "@/lib/navigation";
 import { trpcClient } from "@/lib/trpc";
 import { useInfiniteFeed } from "@/lib/use-infinite-feed";
@@ -108,16 +109,18 @@ export function SearchScreen({
         ]}
       >
         <Feather name="search" size={28} color={colors.mutedForeground} />
-        <TextInput
-          style={styles.input}
+        {/* A bare TextInput can't take D-pad focus on Android (ReactEditText
+            refuses focus it didn't request), so moving right from the sidebar
+            went nowhere. The wrapper gives it a focusable surface. */}
+        <FocusableTextInput
+          containerStyle={styles.inputSurface}
+          inputStyle={styles.input}
           placeholder="Search"
-          placeholderTextColor={colors.mutedForeground}
           autoCapitalize="none"
           autoCorrect={false}
           value={text}
           onChangeText={setText}
-          onFocus={() => setInputFocused(true)}
-          onBlur={() => setInputFocused(false)}
+          onFocusChange={setInputFocused}
           onSubmitEditing={submit}
           returnKeyType="search"
           hasTVPreferredFocus
@@ -173,8 +176,17 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 10,
   },
-  input: {
+  // The bar draws the focus ring, so the wrapper's own surface stays invisible.
+  inputSurface: {
     flex: 1,
+    minHeight: 0,
+    paddingHorizontal: 0,
+    borderWidth: 0,
+    backgroundColor: "transparent",
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  input: {
     color: colors.foreground,
     fontSize: fontSize.lg,
     paddingVertical: spacing.md,
