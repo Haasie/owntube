@@ -1,9 +1,10 @@
 import { Feather } from "@expo/vector-icons";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Animated,
   Image,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -23,6 +24,10 @@ export type Section =
   | "queue"
   | "history"
   | "settings";
+
+/** Row box and the pitch between two rows, shared with the scroll maths. */
+const ROW_HEIGHT = 50;
+const ROW_PITCH = ROW_HEIGHT + spacing.xs;
 
 export const RAIL_WIDTH = 68;
 export const EXPANDED_WIDTH = 228;
@@ -73,6 +78,20 @@ export function Sidebar({
   const [expanded, setExpanded] = useState(false);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const scrollRef = useRef<ScrollView>(null);
+  const [navHeight, setNavHeight] = useState(0);
+  const activeIndex = visible.findIndex((s) => s.key === active);
+
+  // Collapsing hands the rail back to the page, so put the active section back
+  // in view: left where the user scrolled it, a rail parked on Settings shows
+  // neither the current section nor the first few. Scrolls the least it can —
+  // to the top whenever the active row already fits on the first screenful.
+  useEffect(() => {
+    if (expanded || navHeight === 0 || activeIndex < 0) return;
+    const y = Math.max(0, activeIndex * ROW_PITCH + ROW_HEIGHT - navHeight);
+    scrollRef.current?.scrollTo({ y, animated: false });
+  }, [expanded, navHeight, activeIndex]);
+
   // focus-within: expand while any row is focused, collapse shortly after the
   // last one blurs (the timer absorbs the blur→focus gap between rows).
   const handleFocus = () => {
@@ -107,7 +126,17 @@ export function Sidebar({
         />
       </View>
 
-      <View style={styles.nav}>
+      {/* Scrolls: at 50dp a row, only seven fit a 540dp panel, and every
+          section past that used to take focus while staying off screen —
+          invisible rows you could land on but never see. Android scrolls the
+          newly focused child into view for us. */}
+      <ScrollView
+        ref={scrollRef}
+        style={styles.nav}
+        contentContainerStyle={styles.navContent}
+        onLayout={(e) => setNavHeight(e.nativeEvent.layout.height)}
+        showsVerticalScrollIndicator={false}
+      >
         {visible.map((section) => (
           <NavRow
             key={section.key}
@@ -120,7 +149,7 @@ export function Sidebar({
             onPress={() => onSelect(section.key)}
           />
         ))}
-      </View>
+      </ScrollView>
     </Animated.View>
   );
 }
@@ -197,12 +226,13 @@ const styles = StyleSheet.create({
   },
   mark: { width: 36, height: 36 },
   wordmark: { width: 152, height: 32 },
-  nav: { flex: 1, gap: spacing.xs },
+  nav: { flex: 1 },
+  navContent: { gap: spacing.xs },
   row: {
     flexDirection: "row",
     alignItems: "center",
     gap: 14,
-    height: 50,
+    height: ROW_HEIGHT,
     paddingHorizontal: spacing.sm,
     borderRadius: radius.shell,
     borderWidth: focus.borderWidth,
