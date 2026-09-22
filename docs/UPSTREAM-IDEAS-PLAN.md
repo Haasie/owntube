@@ -69,11 +69,13 @@ the accidentally committed `logs/recommendation-debug.ndjson`.
 
 ## Found along the way (not from upstream)
 
-- **Invalidate the materialized home row on a block / dislike.** The
-  `home-feed:v1:*` SQLite row is never invalidated server-side; the client
-  patches its own cache, so a reload within the row's lifetime (or a
-  stale-served one since `9c5e355`) can still show the blocked channel. Drop
-  or rewrite the user's rows in `clearRecommendationCachesForUser`.
+- **Blocks / dislikes vs the materialized home row** — done: the
+  `home-feed:v1:*` row is never invalidated server-side (the client patches
+  its own cache), so a reload could still show a channel blocked or a video
+  disliked / "not interested" since the row was written. `getHomeStream` now
+  filters cached rows against the current exclusions on every read, rather
+  than invalidating (which would make most loads block on a recompute again,
+  since likes and watches clear the pools constantly).
 - **`subscriptions.mergedFeedInfinite` output type.** The empty branch returns
   `UnifiedVideo[]` without `watched`, so the output type is a union (~L1159).
   Upstream fixed the equivalent; harmless today.

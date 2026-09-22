@@ -1,8 +1,8 @@
 import { TRPCError } from "@trpc/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { logger } from "@/lib/logger";
-import { watchHistory } from "@/server/db/schema";
+import { interactions, watchHistory } from "@/server/db/schema";
 import { RateLimitExceededError } from "@/server/errors/rate-limit-exceeded";
 import { UpstreamUnavailableError } from "@/server/errors/upstream-unavailable";
 import { getPersonalizedFeedVideos } from "@/server/recommendation/engine";
@@ -42,6 +42,7 @@ import {
 import {
   getUserSettings,
   normalizeTrendingRegionStored,
+  withoutBlockedChannels,
 } from "@/server/settings/profile";
 import { publicProcedure, router } from "@/server/trpc/init";
 
@@ -313,6 +314,44 @@ function parseHomeStreamRow(
 const homeStreamRefreshInFlight = new Map<string, Promise<void>>();
 
 /**
+ * Applies the user's *current* exclusions to a materialized stream. The row
+ * is never invalidated server-side (likes and watches clear the in-memory
+ * pools constantly; recomputing on each would block most loads again), so a
+ * channel blocked or a video disliked / marked "not interested" after the
+ * row was written is dropped here instead. Cheap: one settings read plus one
+ * indexed interactions lookup over the stream's ids.
+ */
+function withCurrentExclusions(
+  db: HomeFeedDb,
+  userId: number,
+  settings: ReturnType<typeof getUserSettings>,
+  stream: UnifiedVideo[],
+): UnifiedVideo[] {
+  const allowed = withoutBlockedChannels(stream, settings);
+  if (allowed.length === 0) return allowed;
+  const rejected = new Set(
+    db
+      .select({ videoId: interactions.videoId })
+      .from(interactions)
+      .where(
+        and(
+          eq(interactions.userId, userId),
+          inArray(interactions.type, ["ignore", "dislike"]),
+          inArray(
+            interactions.videoId,
+            allowed.map((v) => v.videoId),
+          ),
+        ),
+      )
+      .all()
+      .map((r) => r.videoId),
+  );
+  return rejected.size === 0
+    ? allowed
+    : allowed.filter((v) => !rejected.has(v.videoId));
+}
+
+/**
  * Read-through cache for the merged home stream (per user, materialized in
  * SQLite). `cacheOnly` (the SSR prefetch) never computes — a cold miss returns
  * an empty stream so the client fetches it and shows its skeleton only then.
@@ -333,9 +372,13 @@ async function getHomeStream(
     opts.region,
     settings.personalizedFeedOnly,
   );
-  const fresh = parseHomeStreamRow(readFreshCacheRow(db, key));
+  const cachedStream = (row: { payloadJson: string } | null | undefined) => {
+    const stream = parseHomeStreamRow(row);
+    return stream && withCurrentExclusions(db, userId, settings, stream);
+  };
+  const fresh = cachedStream(readFreshCacheRow(db, key));
   if (fresh) return { stream: fresh, coldStart: false };
-  const stale = parseHomeStreamRow(readLatestCacheRow(db, key));
+  const stale = cachedStream(readLatestCacheRow(db, key));
   if (opts.cacheOnly) {
     if (stale) return { stream: stale, coldStart: false };
     return { stream: [], coldStart: true };
