@@ -28,6 +28,16 @@ export function setLongPressTarget(
   else if (!owner || target === owner) target = null;
 }
 
+/**
+ * Whether the click that ends a hold may still arrive. Unlike
+ * `takeSuppressedPress` this doesn't consume anything, for a view that appeared
+ * *because* of the hold (a menu the long press opened) and so can never
+ * legitimately be acting on the press that ends it.
+ */
+export function isSuppressedPress(): boolean {
+  return holding || Date.now() <= suppressUntil;
+}
+
 /** True (once) when this press is the release of a long press — ignore it. */
 export function takeSuppressedPress(): boolean {
   // Still held down, so a click now can only be this hold's release.

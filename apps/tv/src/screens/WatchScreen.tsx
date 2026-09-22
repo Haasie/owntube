@@ -886,6 +886,14 @@ export function WatchScreen({
    */
   useEffect(() => {
     const sub = player.addListener("playToEnd", () => {
+      // Only believe an end playback actually reached. A seek applied before
+      // the source reports its duration can land past it, and the player then
+      // announces the end of a video that has barely started — resuming from
+      // Continue watching put the up-next card over one that had just begun.
+      const total = detailRef.current?.durationSeconds || player.duration || 0;
+      if (total > 0 && currentTimeRef.current < total - END_TOLERANCE_SECONDS) {
+        return;
+      }
       const detail = detailRef.current;
       if (detail?.channelId) {
         trpcClient.history.upsertEvent
@@ -2020,6 +2028,8 @@ const WATCH_NEXT_DONE_FRACTION = 0.95;
 
 /** A resume point this close to the end starts the video over instead. */
 const RESUME_END_GUARD_SECONDS = 15;
+/** How close playback must have got for an announced end to be a real one. */
+const END_TOLERANCE_SECONDS = 5;
 
 /** Past this, "previous" restarts the video instead of going back one. */
 const RESTART_THRESHOLD_SECONDS = 5;
