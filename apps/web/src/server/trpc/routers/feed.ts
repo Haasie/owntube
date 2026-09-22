@@ -310,10 +310,17 @@ function parseHomeStreamRow(
   }
 }
 
+const homeStreamRefreshInFlight = new Map<string, Promise<void>>();
+
 /**
  * Read-through cache for the merged home stream (per user, materialized in
  * SQLite). `cacheOnly` (the SSR prefetch) never computes — a cold miss returns
  * an empty stream so the client fetches it and shows its skeleton only then.
+ *
+ * An expired row still answers immediately while a recompute refreshes it in
+ * the background: the row lives 10 min but the cache-warmer only rebuilds it
+ * every 20, so blocking on the (upstream-heavy) recompute made roughly every
+ * other home load wait. Only a user with no row at all waits.
  */
 async function getHomeStream(
   db: HomeFeedDb,
@@ -328,10 +335,31 @@ async function getHomeStream(
   );
   const fresh = parseHomeStreamRow(readFreshCacheRow(db, key));
   if (fresh) return { stream: fresh, coldStart: false };
+  const stale = parseHomeStreamRow(readLatestCacheRow(db, key));
   if (opts.cacheOnly) {
-    const stale = parseHomeStreamRow(readLatestCacheRow(db, key));
     if (stale) return { stream: stale, coldStart: false };
     return { stream: [], coldStart: true };
+  }
+  if (stale) {
+    if (!homeStreamRefreshInFlight.has(key)) {
+      const refresh = computeHomeStream(db, userId, opts)
+        .then(({ stream }) => {
+          if (stream.length > 0) {
+            writeCache(db, key, "invidious", stream, "home");
+          }
+        })
+        .catch((error: unknown) => {
+          logger.warn("feed.home_stream_refresh_failed", {
+            userId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        })
+        .finally(() => {
+          homeStreamRefreshInFlight.delete(key);
+        });
+      homeStreamRefreshInFlight.set(key, refresh);
+    }
+    return { stream: stale, coldStart: false };
   }
   const { stream, coldStart } = await computeHomeStream(db, userId, opts);
   if (stream.length > 0) writeCache(db, key, "invidious", stream, "home");
