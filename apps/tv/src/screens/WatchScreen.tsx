@@ -16,7 +16,7 @@ import type {
   VideoStoryboard,
 } from "@web/server/services/proxy.types";
 import { useKeepAwake } from "expo-keep-awake";
-import { useVideoPlayer, VideoView } from "expo-video";
+import { useVideoPlayer, type VideoPlayer, VideoView } from "expo-video";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -31,7 +31,13 @@ import {
   View,
 } from "react-native";
 import { FocusButton } from "@/components/FocusButton";
+import { FocusableTextInput } from "@/components/focusable-text-input";
 import { IconButton } from "@/components/IconButton";
+import {
+  type MenuItem,
+  type MenuPage,
+  MenuPanel,
+} from "@/components/MenuPanel";
 import { UpNext } from "@/components/UpNext";
 import { VideoRow } from "@/components/VideoRow";
 import {
@@ -47,7 +53,18 @@ import {
   type OpenVideoOptions,
   type PlayContext,
 } from "@/lib/navigation";
+import {
+  formatRate,
+  loadPlayerPrefs,
+  PLAYBACK_RATES,
+  playerPrefs,
+  savePlayerPrefs,
+} from "@/lib/player-prefs";
 import { queryClient } from "@/lib/query-client";
+import {
+  SPONSORBLOCK_COLORS,
+  SPONSORBLOCK_LABELS,
+} from "@/lib/sponsorblock-labels";
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
 import { colors, focus, fontSize, monoFont, radius, spacing } from "@/theme";
@@ -84,6 +101,20 @@ type PlaybackOption = {
   | { kind: "auto" | "muxed"; audioUrl?: never }
   | { kind: "split"; audioUrl: string }
 );
+
+/** expo-video 2.0 doesn't export the track type by name. */
+type SubtitleTrack = NonNullable<VideoPlayer["subtitleTrack"]>;
+
+type Toast = {
+  text: string;
+  /** Shown while the controls are hidden, when OK does something. */
+  hint?: string;
+  segment?: SponsorBlockSegment;
+  action?: "undo" | "skip";
+};
+
+/** How long a toast stays up; a SponsorBlock undo is offered for this long. */
+const TOAST_MS = 5000;
 
 /** Seconds moved per D-pad press, and per tick while a direction is held. */
 const SCRUB_STEP_SECONDS = 10;
@@ -194,10 +225,6 @@ export function WatchScreen({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [channelFocused, setChannelFocused] = useState(false);
-  // Subtitle tracks only appear once the stream is ready, so the CC button
-  // stays disabled until ExoPlayer reports some.
-  const [hasSubtitles, setHasSubtitles] = useState(false);
-  const [subtitlesOn, setSubtitlesOn] = useState(false);
   /**
    * Audio language for multi-audio (dubbed) videos, as an index into
    * audioLanguageOptions (0 = the original — also the server manifest's
@@ -205,10 +232,45 @@ export function WatchScreen({
    * the DASH manifest URL for one filtered to the picked language (`&lang=`).
    */
   const [audioLangIndex, setAudioLangIndex] = useState(0);
-  const [audioToast, setAudioToast] = useState<string | null>(null);
+  /**
+   * One transient message at a time, top right. SponsorBlock toasts carry an
+   * action that OK performs while the controls are hidden: undo a skip, or
+   * skip a segment when auto-skip is off.
+   */
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastRef = useRef<Toast | null>(null);
+  toastRef.current = toast;
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((next: Toast, ms = TOAST_MS) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(next);
+    toastTimerRef.current = setTimeout(() => setToast(null), ms);
+  }, []);
+  /** The settings panel (gear button). */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuOpenRef = useRef(false);
+  menuOpenRef.current = menuOpen;
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  /**
+   * Quality ceiling picked in the panel, in pixels; null follows the
+   * defaultPlaybackQuality setting. Applied to the server DASH manifest.
+   */
+  const [qualityCap, setQualityCap] = useState<number | null>(null);
+  const [playbackRate, setPlaybackRate] = useState(
+    () => playerPrefs().playbackRate,
+  );
+  const [subtitleTracks, setSubtitleTracks] = useState<SubtitleTrack[]>([]);
+  const [subtitleTrack, setSubtitleTrack] = useState<SubtitleTrack | null>(
+    null,
+  );
+  const [statsOn, setStatsOn] = useState(false);
+  const [segments, setSegments] = useState<SponsorBlockSegment[]>([]);
+  /** Segments the viewer chose to watch (undo), so they aren't skipped again. */
+  const keptSegmentsRef = useRef(new Set<string>());
+  /** Set when OK was spent on a SponsorBlock toast, so it doesn't also pause. */
+  const swallowPressRef = useRef(false);
   /** Playback reached the end (and wasn't dismissed since). */
   const [ended, setEnded] = useState(false);
-  const audioToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Scrubbing: left/right move a pending position that only commits on release,
   // so holding the D-pad sweeps the bar instead of firing a seek per press.
   const [scrubSeconds, setScrubSeconds] = useState<number | null>(null);
@@ -343,8 +405,6 @@ export function WatchScreen({
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
-    setHasSubtitles(false);
-    setSubtitlesOn(false);
     setAudioLangIndex(0);
     detailRef.current = null;
     currentTimeRef.current = 0;
@@ -378,6 +438,7 @@ export function WatchScreen({
       .then((detail) => {
         if (cancelled) return;
         detailRef.current = detail;
+        setChannelId(detail.channelId ?? null);
         const playbackOptions = buildPlaybackOptions(detail);
         const maxHeight = settingsRef.current.maxHeight;
         if (playbackOptions.length === 0) {
@@ -411,7 +472,9 @@ export function WatchScreen({
               }),
           })
           .then((segments) => {
-            if (!cancelled) segmentsRef.current = segments;
+            if (cancelled) return;
+            segmentsRef.current = segments;
+            setSegments(segments);
           })
           .catch(() => {});
       })
@@ -467,6 +530,94 @@ export function WatchScreen({
     };
   }, [videoId]);
 
+  // Channel subscribe button: unknown state hides it (see ChannelScreen).
+  const [channelId, setChannelId] = useState<string | null>(null);
+  const subscription = trpc.subscriptions.status.useQuery(
+    { channelId: channelId ?? "" },
+    { enabled: channelId !== null },
+  );
+  const [subscribedOverride, setSubscribedOverride] = useState<boolean | null>(
+    null,
+  );
+  const subscribed =
+    subscribedOverride ?? subscription.data?.subscribed ?? null;
+  const [subscribePending, setSubscribePending] = useState(false);
+  const toggleSubscribed = () => {
+    if (!channelId || subscribed === null || subscribePending) return;
+    const next = !subscribed;
+    setSubscribePending(true);
+    setSubscribedOverride(next);
+    (next
+      ? trpcClient.subscriptions.add.mutate({ channelId })
+      : trpcClient.subscriptions.remove.mutate({ channelId })
+    )
+      .then(() => {
+        void queryClient.invalidateQueries({ queryKey: ["feed"] });
+        void queryClient.invalidateQueries({
+          queryKey: [["subscriptions"]],
+        });
+      })
+      .catch(() => setSubscribedOverride(!next))
+      .finally(() => setSubscribePending(false));
+  };
+
+  // Save to playlist: only fetched once the panel opens.
+  const playlistsQuery = trpc.playlists.list.useQuery(undefined, {
+    enabled: menuOpen,
+  });
+  const membershipQuery = trpc.playlists.membership.useQuery(undefined, {
+    enabled: menuOpen,
+  });
+  const [newPlaylistName, setNewPlaylistName] = useState("");
+  const inPlaylist = (playlistId: number) =>
+    (membershipQuery.data ?? []).some(
+      (m) => m.playlistId === playlistId && m.videoId === videoId,
+    );
+  const togglePlaylist = (playlistId: number, name: string) => {
+    const detail = detailRef.current;
+    const adding = !inPlaylist(playlistId);
+    (adding
+      ? trpcClient.playlists.addItem.mutate({
+          playlistId,
+          videoId,
+          channelId: detail?.channelId ?? undefined,
+        })
+      : trpcClient.playlists.removeItem.mutate({ playlistId, videoId })
+    )
+      .then(() => {
+        showToast({
+          text: adding ? `Saved to ${name}` : `Removed from ${name}`,
+        });
+        void membershipQuery.refetch();
+        void queryClient.invalidateQueries({
+          queryKey: ["feed", `playlists.itemsDetailed:${playlistId}`],
+        });
+      })
+      .catch(() => showToast({ text: "Couldn't update the playlist" }));
+  };
+  const createPlaylist = () => {
+    const name = newPlaylistName.trim();
+    if (!name) return;
+    const detail = detailRef.current;
+    trpcClient.playlists.create
+      .mutate({ name })
+      .then(({ id }) =>
+        trpcClient.playlists.addItem.mutate({
+          playlistId: id,
+          videoId,
+          channelId: detail?.channelId ?? undefined,
+        }),
+      )
+      .then(() => {
+        setNewPlaylistName("");
+        setMenuOpen(false);
+        showToast({ text: `Saved to ${name}` });
+        void playlistsQuery.refetch();
+        void membershipQuery.refetch();
+      })
+      .catch(() => showToast({ text: "Couldn't create the playlist" }));
+  };
+
   const relatedQuery = trpc.video.related.useQuery({ videoId });
   const related: UnifiedVideo[] = relatedQuery.data?.videos ?? NO_VIDEOS;
 
@@ -486,6 +637,9 @@ export function WatchScreen({
   const showUpNextRef = useRef(false);
   showUpNextRef.current = showUpNext;
 
+  const playbackRateRef = useRef(playbackRate);
+  playbackRateRef.current = playbackRate;
+
   // Load the stream and resume from the saved offset.
   useEffect(() => {
     if (state.status !== "ready") return;
@@ -501,10 +655,16 @@ export function WatchScreen({
       // A non-default audio language narrows the server DASH manifest to that
       // language (index 0 is the original — already the manifest default).
       let uri = selectedOption.videoUrl;
-      if (selectedOption.id === "dash-vp9" && audioLangIndex > 0) {
-        const langs = audioLanguageOptions(state.detail.audioSources ?? []);
-        const picked = langs[audioLangIndex];
-        if (picked) uri = `${uri}&lang=${encodeURIComponent(picked.lang)}`;
+      if (selectedOption.id === "dash-vp9") {
+        if (audioLangIndex > 0) {
+          const langs = audioLanguageOptions(state.detail.audioSources ?? []);
+          const picked = langs[audioLangIndex];
+          if (picked) uri = `${uri}&lang=${encodeURIComponent(picked.lang)}`;
+        }
+        // The panel's choice, else the shared defaultPlaybackQuality. Servers
+        // without the parameter ignore it and serve the full ladder.
+        const cap = qualityCap ?? settingsRef.current.maxHeight;
+        if (Number.isFinite(cap)) uri = `${uri}&maxHeight=${cap}`;
       }
       player.muted = false;
       player.replace({ uri, headers: authHeader });
@@ -527,6 +687,8 @@ export function WatchScreen({
       if (selectedOption.kind === "split")
         audioPlayer.currentTime = startSeconds;
     }
+    player.playbackRate = playbackRateRef.current;
+    audioPlayer.playbackRate = playbackRateRef.current;
     const shouldPlay = shouldPlayAfterReplaceRef.current;
     shouldPlayAfterReplaceRef.current = true;
     if (shouldPlay) {
@@ -537,7 +699,46 @@ export function WatchScreen({
       audioPlayer.pause();
     }
     setIsPlaying(shouldPlay);
-  }, [state, player, audioPlayer, resumeSeconds, authHeader, audioLangIndex]);
+  }, [
+    state,
+    player,
+    audioPlayer,
+    resumeSeconds,
+    authHeader,
+    audioLangIndex,
+    qualityCap,
+  ]);
+
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
+
+  /**
+   * Records the stream's subtitle tracks and, the first time any appear,
+   * turns on the device's preferred caption language if the video has it.
+   */
+  const captionsAppliedRef = useRef(false);
+  const applySubtitleTracks = (tracks: SubtitleTrack[]) => {
+    setSubtitleTracks(tracks);
+    if (captionsAppliedRef.current || tracks.length === 0) return;
+    captionsAppliedRef.current = true;
+    const preferred = playerPrefs().captionLanguage;
+    const match = preferred ? findTrack(tracks, preferred) : undefined;
+    if (match) {
+      player.subtitleTrack = match;
+      setSubtitleTrack(match);
+    }
+  };
+  const applySubtitleTracksRef = useRef(applySubtitleTracks);
+  applySubtitleTracksRef.current = applySubtitleTracks;
+
+  useEffect(() => {
+    loadPlayerPrefs().then((prefs) => {
+      if (prefs.playbackRate === playbackRateRef.current) return;
+      setPlaybackRate(prefs.playbackRate);
+      player.playbackRate = prefs.playbackRate;
+      audioPlayer.playbackRate = prefs.playbackRate;
+    });
+  }, [player, audioPlayer]);
 
   // SponsorBlock auto-skip: on each tick, jump past any segment we're inside.
   useEffect(() => {
@@ -549,7 +750,9 @@ export function WatchScreen({
       if (controlsVisibleRef.current) setCurrentTime(currentTime);
       const hit = segmentsRef.current.find(
         (s) =>
-          currentTime >= s.startSeconds && currentTime < s.endSeconds - 0.5,
+          currentTime >= s.startSeconds &&
+          currentTime < s.endSeconds - 0.5 &&
+          !keptSegmentsRef.current.has(s.uuid),
       );
       const selectedOption = selectedOptionRef.current;
       if (hit && settingsRef.current.sponsorBlockAutoSkip) {
@@ -557,7 +760,28 @@ export function WatchScreen({
         if (selectedOption?.kind === "split") {
           audioPlayer.currentTime = hit.endSeconds;
         }
+        showToastRef.current({
+          text: `Skipped ${SPONSORBLOCK_LABELS[hit.category] ?? "segment"}`,
+          hint: "OK to undo",
+          segment: hit,
+          action: "undo",
+        });
         return;
+      }
+      // Auto-skip off: offer the skip for as long as the segment plays.
+      const offered = toastRef.current?.action === "skip";
+      if (hit && !offered) {
+        showToastRef.current(
+          {
+            text: SPONSORBLOCK_LABELS[hit.category] ?? "Segment",
+            hint: "OK to skip",
+            segment: hit,
+            action: "skip",
+          },
+          (hit.endSeconds - currentTime) * 1000,
+        );
+      } else if (!hit && offered) {
+        setToast(null);
       }
       if (selectedOption?.kind === "split") {
         const audioDelta = Math.abs(audioPlayer.currentTime - currentTime);
@@ -681,8 +905,8 @@ export function WatchScreen({
       setIsBuffering(status === "loading");
       if (status === "readyToPlay") {
         setDuration(player.duration);
-        setHasSubtitles(player.availableSubtitleTracks.length > 0);
-        setSubtitlesOn(player.subtitleTrack !== null);
+        applySubtitleTracksRef.current(player.availableSubtitleTracks);
+        setSubtitleTrack(player.subtitleTrack);
       }
       if (status === "error") fallbackToStablePlayback();
     });
@@ -705,13 +929,13 @@ export function WatchScreen({
     const available = player.addListener(
       "availableSubtitleTracksChange",
       ({ availableSubtitleTracks }) => {
-        setHasSubtitles(availableSubtitleTracks.length > 0);
+        applySubtitleTracksRef.current(availableSubtitleTracks);
       },
     );
     const selected = player.addListener(
       "subtitleTrackChange",
       ({ subtitleTrack }) => {
-        setSubtitlesOn(subtitleTrack !== null);
+        setSubtitleTrack(subtitleTrack);
       },
     );
     return () => {
@@ -729,6 +953,14 @@ export function WatchScreen({
       if (isPlayingRef.current) setControlsVisible(false);
     }, 4000);
   }, []);
+
+  // Closing the settings panel remounts the controls; show them, with the
+  // usual auto-hide, rather than leaving whatever state they were in.
+  const menuWasOpenRef = useRef(false);
+  useEffect(() => {
+    if (menuWasOpenRef.current && !menuOpen) revealControls();
+    menuWasOpenRef.current = menuOpen;
+  }, [menuOpen, revealControls]);
 
   // Android's MediaSession (registered by expo-video for the hardware
   // Play/Pause key) claims that key before it reaches our TVEventHandler, so
@@ -819,6 +1051,10 @@ export function WatchScreen({
   };
 
   const commitScrubOrToggle = () => {
+    if (swallowPressRef.current) {
+      swallowPressRef.current = false;
+      return;
+    }
     const target = scrubRef.current;
     if (target === null) {
       togglePlayback();
@@ -900,11 +1136,24 @@ export function WatchScreen({
    */
   useTVEventHandler((event) => {
     if (event.eventType === "focus" || event.eventType === "blur") return;
-    // The up-next card owns the screen; its buttons take the D-pad.
-    if (showUpNextRef.current) return;
-    revealControls();
+    // The up-next card and the settings panel own the screen; their buttons
+    // take the D-pad.
+    if (showUpNextRef.current || menuOpenRef.current) return;
     // ACTION_UP is 1; the same long-press event fires on press and release.
     const isKeyUp = Number(event.eventKeyAction) === 1;
+    // OK with the controls hidden acts on a SponsorBlock toast (undo / skip)
+    // instead of pausing. The key-down event arrives before the focused
+    // scrubber's onPress, which then swallows the same press.
+    if (
+      event.eventType === "select" &&
+      !isKeyUp &&
+      !controlsVisibleRef.current &&
+      actOnToastRef.current()
+    ) {
+      swallowPressRef.current = true;
+      return;
+    }
+    revealControls();
     const canScrub = focusedButtonsRef.current === 0;
     switch (event.eventType) {
       case "playPause":
@@ -958,35 +1207,120 @@ export function WatchScreen({
    * Subtitles come from the stream's own tracks, so the toggle is only useful
    * once ExoPlayer has surfaced at least one.
    */
+  /** Picks a caption track (null = off) and remembers its language. */
+  const chooseSubtitles = (track: SubtitleTrack | null) => {
+    player.subtitleTrack = track;
+    setSubtitleTrack(track);
+    savePlayerPrefs({ captionLanguage: track?.language ?? null });
+  };
+
+  /** The CC button: off, or back on in the remembered (else first) language. */
   const toggleSubtitles = () => {
-    const tracks = player.availableSubtitleTracks;
-    if (tracks.length === 0) return;
-    const next = player.subtitleTrack ? null : tracks[0];
-    player.subtitleTrack = next;
-    setSubtitlesOn(next !== null);
+    if (subtitleTrack) {
+      chooseSubtitles(null);
+      return;
+    }
+    const preferred = playerPrefs().captionLanguage;
+    chooseSubtitles(
+      (preferred ? findTrack(subtitleTracks, preferred) : undefined) ??
+        subtitleTracks[0] ??
+        null,
+    );
   };
 
   /**
-   * Cycle the audio language of a multi-audio video. Position and play state
-   * survive the manifest swap through the same pending-seek mechanism the
-   * error fallback uses.
+   * Swaps the playing source (quality, audio language) keeping position and
+   * play state, through the same pending-seek mechanism the error fallback
+   * uses.
    */
-  const cycleAudioLanguage = () => {
-    if (state.status !== "ready") return;
-    const langs = audioLanguageOptions(state.detail.audioSources ?? []);
-    if (langs.length < 2) return;
-    const next = (audioLangIndex + 1) % langs.length;
+  const keepPositionAcrossSwap = () => {
     pendingSeekRef.current = currentTimeRef.current;
     shouldPlayAfterReplaceRef.current = isPlayingRef.current;
-    setAudioLangIndex(next);
-    setAudioToast(`Audio: ${langs[next]?.label ?? ""}`);
-    if (audioToastTimerRef.current) clearTimeout(audioToastTimerRef.current);
-    audioToastTimerRef.current = setTimeout(() => setAudioToast(null), 2500);
+  };
+
+  const chooseAudioLanguage = (index: number) => {
+    if (state.status !== "ready" || index === audioLangIndex) return;
+    const langs = audioLanguageOptions(state.detail.audioSources ?? []);
+    keepPositionAcrossSwap();
+    setAudioLangIndex(index);
+    showToast({ text: `Audio: ${langs[index]?.label ?? ""}` });
+  };
+
+  /** Quality: a ceiling on the server DASH source, or another source. */
+  const chooseQuality = (cap: number | null) => {
+    if (state.status !== "ready") return;
+    const dashIndex = state.playbackOptions.findIndex(
+      (o) => o.id === "dash-vp9",
+    );
+    if (dashIndex < 0) return;
+    if (cap === qualityCap && dashIndex === state.selectedOptionIndex) return;
+    keepPositionAcrossSwap();
+    setQualityCap(cap);
+    setState((previous) =>
+      previous.status === "ready"
+        ? { ...previous, selectedOptionIndex: dashIndex }
+        : previous,
+    );
+  };
+
+  const chooseSource = (index: number) => {
+    if (state.status !== "ready" || index === state.selectedOptionIndex) return;
+    keepPositionAcrossSwap();
+    setState((previous) =>
+      previous.status === "ready"
+        ? { ...previous, selectedOptionIndex: index }
+        : previous,
+    );
+  };
+
+  const chooseRate = (rate: number) => {
+    setPlaybackRate(rate);
+    player.playbackRate = rate;
+    audioPlayer.playbackRate = rate;
+    savePlayerPrefs({ playbackRate: rate });
+  };
+
+  const seekTo = (seconds: number) => {
+    player.currentTime = seconds;
+    if (selectedOptionRef.current?.kind === "split") {
+      audioPlayer.currentTime = seconds;
+    }
+  };
+
+  /** OK on a SponsorBlock toast: undo the skip, or take the offered one. */
+  const actOnToast = (): boolean => {
+    const current = toastRef.current;
+    if (!current?.segment || !current.action) return false;
+    if (current.action === "undo") {
+      keptSegmentsRef.current.add(current.segment.uuid);
+      seekTo(current.segment.startSeconds);
+    } else {
+      seekTo(current.segment.endSeconds);
+    }
+    setToast(null);
+    return true;
+  };
+
+  const actOnToastRef = useRef(actOnToast);
+  actOnToastRef.current = actOnToast;
+
+  const markWatched = () => {
+    const detail = detailRef.current;
+    if (!detail) return;
+    trpcClient.subscriptions.markWatched
+      .mutate({ videoId, channelId: detail.channelId ?? undefined })
+      .then(() => {
+        showToast({ text: "Marked as watched" });
+        void queryClient.invalidateQueries({
+          queryKey: [["history", "progressAll"]],
+        });
+      })
+      .catch(() => showToast({ text: "Couldn't mark as watched" }));
   };
 
   useEffect(
     () => () => {
-      if (audioToastTimerRef.current) clearTimeout(audioToastTimerRef.current);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     },
     [],
   );
@@ -1031,6 +1365,214 @@ export function WatchScreen({
   const chapterIndex = chapterIndexAt(chapters, scrubTarget);
   const chapterTitle = chapterIndex >= 0 ? chapters[chapterIndex]?.title : null;
 
+  const selectedOption = state.playbackOptions[state.selectedOptionIndex];
+  const onDash = selectedOption?.id === "dash-vp9";
+  const effectiveCap = qualityCap ?? settingsRef.current.maxHeight;
+  const qualityLabelNow = !onDash
+    ? (selectedOption?.label ?? "")
+    : qualityCap === null
+      ? Number.isFinite(effectiveCap)
+        ? `Auto (up to ${effectiveCap}p)`
+        : "Auto"
+      : `${qualityCap}p`;
+  const heights = qualityHeights(detail);
+  const subtitleLabel = (track: SubtitleTrack) =>
+    track.label || track.language || "Unknown";
+
+  /** The settings panel's pages, rebuilt from current state on each render. */
+  const buildPage = (key: string): MenuPage => {
+    switch (key) {
+      case "quality":
+        return {
+          title: "Quality",
+          items: [
+            {
+              key: "auto",
+              label: Number.isFinite(settingsRef.current.maxHeight)
+                ? `Auto (up to ${settingsRef.current.maxHeight}p)`
+                : "Auto",
+              selected: onDash && qualityCap === null,
+              onPress: () => chooseQuality(null),
+            },
+            ...heights.map<MenuItem>((height) => ({
+              key: `h${height}`,
+              label: `${height}p`,
+              selected: onDash && qualityCap === height,
+              onPress: () => chooseQuality(height),
+            })),
+            // The fallback sources, for when DASH misbehaves on a device.
+            ...state.playbackOptions
+              .map((option, index) => ({ option, index }))
+              .filter(({ option }) => option.id !== "dash-vp9")
+              .map<MenuItem>(({ option, index }) => ({
+                key: option.id,
+                label: sourceMenuLabel(option),
+                selected: index === state.selectedOptionIndex,
+                onPress: () => chooseSource(index),
+              })),
+          ],
+        };
+      case "captions":
+        return {
+          title: "Captions",
+          items: [
+            {
+              key: "off",
+              label: "Off",
+              selected: subtitleTrack === null,
+              onPress: () => chooseSubtitles(null),
+            },
+            ...subtitleTracks.map<MenuItem>((track) => ({
+              key: track.id,
+              label: subtitleLabel(track),
+              selected: subtitleTrack?.id === track.id,
+              onPress: () => chooseSubtitles(track),
+            })),
+          ],
+        };
+      case "audio":
+        return {
+          title: "Audio language",
+          items: audioLangs.map<MenuItem>((lang, index) => ({
+            key: lang.lang,
+            label: lang.label,
+            selected: index === audioLangIndex,
+            onPress: () => chooseAudioLanguage(index),
+          })),
+        };
+      case "speed":
+        return {
+          title: "Speed",
+          items: PLAYBACK_RATES.map<MenuItem>((rate) => ({
+            key: String(rate),
+            label: formatRate(rate),
+            selected: rate === playbackRate,
+            onPress: () => chooseRate(rate),
+          })),
+        };
+      case "chapters":
+        return {
+          title: "Chapters",
+          items: chapters.map<MenuItem>((chapter, index) => ({
+            key: String(chapter.startSeconds),
+            label: chapter.title,
+            detail: formatTime(chapter.startSeconds),
+            selected: index === chapterIndex,
+            onPress: () => {
+              seekTo(chapter.startSeconds);
+              setMenuOpen(false);
+            },
+          })),
+        };
+      case "playlists":
+        return {
+          title: "Save to playlist",
+          items: [
+            ...(playlistsQuery.data ?? []).map<MenuItem>((playlist) => ({
+              key: String(playlist.id),
+              label: playlist.name,
+              selected: inPlaylist(playlist.id),
+              onPress: () => {
+                togglePlaylist(playlist.id, playlist.name);
+                return "stay";
+              },
+            })),
+            { key: "new", label: "New playlist…", submenu: "newPlaylist" },
+          ],
+        };
+      case "newPlaylist":
+        return {
+          title: "New playlist",
+          content: (
+            <FocusableTextInput
+              value={newPlaylistName}
+              onChangeText={setNewPlaylistName}
+              placeholder="Playlist name"
+              hasTVPreferredFocus
+              onSubmitEditing={createPlaylist}
+              returnKeyType="done"
+              maxLength={120}
+            />
+          ),
+          items: [
+            {
+              key: "create",
+              label: "Create and save",
+              onPress: () => {
+                createPlaylist();
+                return "stay";
+              },
+            },
+          ],
+        };
+      default:
+        return {
+          title: "Settings",
+          items: [
+            {
+              key: "quality",
+              label: "Quality",
+              detail: qualityLabelNow,
+              submenu: "quality",
+            },
+            ...(subtitleTracks.length > 0
+              ? [
+                  {
+                    key: "captions",
+                    label: "Captions",
+                    detail: subtitleTrack
+                      ? subtitleLabel(subtitleTrack)
+                      : "Off",
+                    submenu: "captions",
+                  },
+                ]
+              : []),
+            ...(canChooseAudioLanguage
+              ? [
+                  {
+                    key: "audio",
+                    label: "Audio language",
+                    detail: audioLangs[audioLangIndex]?.label,
+                    submenu: "audio",
+                  },
+                ]
+              : []),
+            {
+              key: "speed",
+              label: "Speed",
+              detail: formatRate(playbackRate),
+              submenu: "speed",
+            },
+            ...(chapters.length > 0
+              ? [{ key: "chapters", label: "Chapters", submenu: "chapters" }]
+              : []),
+            {
+              key: "playlists",
+              label: "Save to playlist",
+              submenu: "playlists",
+            },
+            {
+              key: "watched",
+              label: "Mark as watched",
+              onPress: () => {
+                markWatched();
+                setMenuOpen(false);
+              },
+            },
+            {
+              key: "stats",
+              label: "Stats for nerds",
+              detail: statsOn ? "On" : "Off",
+              onPress: () => {
+                setStatsOn((on) => !on);
+                return "stay";
+              },
+            },
+          ],
+        };
+    }
+  };
+
   return (
     <View style={styles.container}>
       <VideoView
@@ -1044,10 +1586,21 @@ export function WatchScreen({
           <ActivityIndicator size="large" color={colors.brand} />
         </View>
       ) : null}
-      {audioToast ? (
-        <View style={styles.audioToast} pointerEvents="none">
-          <Text style={styles.audioToastText}>{audioToast}</Text>
+      {toast ? (
+        <View style={styles.toast} pointerEvents="none">
+          <Text style={styles.toastText}>{toast.text}</Text>
+          {toast.hint && !controlsVisible ? (
+            <Text style={styles.toastHint}>{toast.hint}</Text>
+          ) : null}
         </View>
+      ) : null}
+      {statsOn ? (
+        <StatsOverlay
+          player={player}
+          option={selectedOption}
+          cap={onDash ? effectiveCap : undefined}
+          subtitles={subtitleTrack ? subtitleLabel(subtitleTrack) : "off"}
+        />
       ) : null}
 
       {showUpNext && nextVideo ? (
@@ -1058,6 +1611,8 @@ export function WatchScreen({
           onPlay={playNext}
           onCancel={() => setEnded(false)}
         />
+      ) : menuOpen ? (
+        <MenuPanel buildPage={buildPage} onClose={closeMenu} />
       ) : (
         // Controls stay mounted (so a focused button always catches the next key
         // to re-reveal them); visibility is just opacity. The up-next card
@@ -1133,6 +1688,24 @@ export function WatchScreen({
                   />
                 </View>
                 {totalSeconds > 0
+                  ? segments.map((segment) => (
+                      <View
+                        key={segment.uuid}
+                        pointerEvents="none"
+                        style={[
+                          styles.segmentMark,
+                          {
+                            left: `${Math.min(100, (segment.startSeconds / totalSeconds) * 100)}%`,
+                            width: `${Math.max(0.3, ((segment.endSeconds - segment.startSeconds) / totalSeconds) * 100)}%`,
+                            backgroundColor:
+                              SPONSORBLOCK_COLORS[segment.category] ??
+                              colors.success,
+                          },
+                        ]}
+                      />
+                    ))
+                  : null}
+                {totalSeconds > 0
                   ? chapters.map((chapter) => (
                       <View
                         key={chapter.startSeconds}
@@ -1190,6 +1763,15 @@ export function WatchScreen({
                     )}
                   </Pressable>
                 ) : null}
+                {subscribed !== null ? (
+                  <FocusButton
+                    label={subscribed ? "Subscribed" : "Subscribe"}
+                    variant={subscribed ? "ghost" : "primary"}
+                    onPress={toggleSubscribed}
+                    onFocusChange={onButtonFocusChange}
+                    style={styles.subscribe}
+                  />
+                ) : null}
               </View>
 
               <View style={styles.transport}>
@@ -1243,24 +1825,21 @@ export function WatchScreen({
                   onFocusChange={onButtonFocusChange}
                 />
                 {/* Only offered when the stream actually carries subtitles. */}
-                {hasSubtitles ? (
+                {subtitleTracks.length > 0 ? (
                   <IconButton
                     icon="type"
                     action="captions"
-                    active={subtitlesOn}
+                    active={subtitleTrack !== null}
                     onPress={toggleSubtitles}
                     onFocusChange={onButtonFocusChange}
                   />
                 ) : null}
-                {/* Dubbed videos: cycle audio language (original is default). */}
-                {canChooseAudioLanguage ? (
-                  <IconButton
-                    icon="globe"
-                    active={audioLangIndex > 0}
-                    onPress={cycleAudioLanguage}
-                    onFocusChange={onButtonFocusChange}
-                  />
-                ) : null}
+                {/* Quality, captions, audio language, speed, chapters… */}
+                <IconButton
+                  icon="settings"
+                  onPress={() => setMenuOpen(true)}
+                  onFocusChange={onButtonFocusChange}
+                />
               </View>
             </View>
 
@@ -1457,16 +2036,38 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  audioToast: {
+  toast: {
     position: "absolute",
     top: 36,
     right: 36,
+    alignItems: "flex-end",
     backgroundColor: "rgba(0, 0, 0, 0.75)",
     borderRadius: radius.shell,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
   },
-  audioToastText: { color: colors.foreground, fontSize: fontSize.md },
+  toastText: { color: colors.foreground, fontSize: fontSize.md },
+  toastHint: { color: colors.mutedForeground, fontSize: fontSize.sm },
+  subscribe: { minHeight: 40, marginLeft: spacing.sm },
+  stats: {
+    position: "absolute",
+    top: 36,
+    left: 36,
+    padding: spacing.sm,
+    borderRadius: radius.shell,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+  },
+  statsText: {
+    color: colors.foreground,
+    fontSize: fontSize.sm,
+    fontFamily: monoFont,
+  },
+  segmentMark: {
+    position: "absolute",
+    top: SCRUB_PAD,
+    height: TRACK_HEIGHT,
+    opacity: 0.85,
+  },
   info: { gap: spacing.xs },
   progressRow: {
     flexDirection: "row",
@@ -1570,6 +2171,93 @@ const styles = StyleSheet.create({
   },
   muted: { color: colors.mutedForeground, fontSize: fontSize.md },
 });
+
+/** A track in the wanted language, matching "en" to "en-US" and back. */
+function findTrack(
+  tracks: SubtitleTrack[],
+  language: string,
+): SubtitleTrack | undefined {
+  const base = language.split("-")[0];
+  return (
+    tracks.find((t) => t.language === language) ??
+    tracks.find((t) => t.language.split("-")[0] === base)
+  );
+}
+
+/**
+ * The quality rungs the video offers, tallest first — what the panel lists as
+ * ceilings for the DASH source. By YouTube's label ("1080p"), which the
+ * server's `maxHeight` also goes by; the frame height of a cinemascope
+ * rendition (804, 608…) would list odd rungs.
+ */
+function qualityHeights(detail: VideoDetail): number[] {
+  const heights = new Set<number>();
+  for (const source of detail.videoSources) {
+    const labelled = source.quality?.match(/(\d{3,4})p/)?.[1];
+    const height = labelled ? Number.parseInt(labelled, 10) : source.height;
+    if (typeof height === "number" && height >= 144) heights.add(height);
+  }
+  return [...heights].sort((a, b) => b - a);
+}
+
+function sourceMenuLabel(option: PlaybackOption): string {
+  if (option.kind === "split") return `${option.label} (separate audio)`;
+  if (option.kind === "muxed") return `${option.label} (MP4)`;
+  return option.label;
+}
+
+/**
+ * Stats for nerds: what is actually playing, for debugging real TVs. Polls the
+ * player once a second on its own, so the screen around it doesn't re-render.
+ */
+function StatsOverlay({
+  player,
+  option,
+  cap,
+  subtitles,
+}: {
+  player: VideoPlayer;
+  option: PlaybackOption | undefined;
+  cap: number | undefined;
+  subtitles: string;
+}) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const buffered = Math.max(0, player.bufferedPosition - player.currentTime);
+  const host = (() => {
+    try {
+      return new URL(option?.videoUrl ?? "").host;
+    } catch {
+      return "?";
+    }
+  })();
+  const rows: [string, string][] = [
+    ["Source", `${option?.id ?? "?"} · ${option?.label ?? ""}`],
+    ["Host", host],
+    ["Cap", cap === undefined || !Number.isFinite(cap) ? "none" : `${cap}p`],
+    ["Status", `${player.status}${player.playing ? " · playing" : ""}`],
+    [
+      "Position",
+      `${formatTime(player.currentTime)} / ${formatTime(player.duration)}`,
+    ],
+    ["Buffer", `${buffered.toFixed(1)} s`],
+    ["Speed", formatRate(player.playbackRate)],
+    ["Live", player.isLive ? "yes" : "no"],
+    ["Captions", subtitles],
+  ];
+  return (
+    <View style={styles.stats} pointerEvents="none">
+      {rows.map(([label, value]) => (
+        <Text key={label} style={styles.statsText} numberOfLines={1}>
+          {label.padEnd(9)} {value}
+        </Text>
+      ))}
+    </View>
+  );
+}
 
 function buildPlaybackOptions(detail: VideoDetail): PlaybackOption[] {
   const options: PlaybackOption[] = [];

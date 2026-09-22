@@ -5,8 +5,8 @@ Status: **in progress.** Written 2026-09-22.
 | phase | state | commits |
 |---|---|---|
 | 0 — groundwork (docs, deps, dead code) | done | `8dda771` |
-| 1 — lean-back playback (up next, queue/playlist play, continue watching) | done | see git log |
-| 2 — player controls (quality, captions, speed, subscribe, save-to) | not started | — |
+| 1 — lean-back playback (up next, queue/playlist play, continue watching) | done | `47f5bc6` |
+| 2 — player controls (quality, captions, speed, subscribe, save-to) | done | see git log |
 | 3 — browsing (home blocks, search, channels, library editing) | not started | — |
 | 4 — distribution (server URL, versioning, updates, CI) | not started | — |
 | 5 — Android TV platform (Watch Next, deep links, Send to TV) | not started | — |
@@ -161,6 +161,37 @@ language, Speed, Stats. Each row opens a vertical list; Back closes.
 **Verify:** each panel row reachable and escapable with the D-pad only; the
 quality choice survives a source fallback; captions choice persists across
 videos.
+
+**As built:**
+- expo-video 2.0 exposes no video tracks, so Quality is a ceiling on the
+  server DASH manifest: a new `maxHeight` query parameter on
+  `/dash/<id>/manifest.mpd` (`capDashVideoHeight`). The ceiling goes by
+  YouTube's rung label, so cinemascope 1920x804 counts as 1080p. Auto
+  follows `defaultPlaybackQuality`. The fallback sources (HLS, MP4, split)
+  are listed too. Older servers ignore the parameter.
+- The panel (`components/MenuPanel.tsx`) is a generic drill-down list. Back
+  steps out a page, and focus returns to the row that opened it.
+- Captions: a per-device language preference, applied when the tracks
+  appear. The CC button stays as a quick toggle. The globe button moved into
+  the panel as "Audio language".
+- Caption size was skipped: expo-video 2.0 has no styling API.
+- Stats for nerds shows source, host, cap, status, buffer, speed, live and
+  captions. Codec and dropped frames aren't exposed by expo-video 2.0.
+- SponsorBlock:
+  - Coloured segment marks on the bar.
+  - "Skipped X · OK to undo" after an auto-skip.
+  - "X · OK to skip" while inside a segment with auto-skip off.
+  - OK only acts on the toast while the controls are hidden; with the
+    controls up, it goes to the focused button.
+- Verified on the emulator:
+  - The panel pages.
+  - Quality reaching the server (`maxHeight=480`).
+  - English captions persisting to the next video.
+  - Subscribe button present.
+  - The skip toast and segment marks.
+- Not verified: the undo press itself (the emulator decoder is too slow to
+  time it reliably), and writes to real playlists, subscriptions or
+  watched state.
 
 ## Phase 3 — browsing parity
 
