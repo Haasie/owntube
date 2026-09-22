@@ -1461,14 +1461,22 @@ function buildPlaybackOptions(detail: VideoDetail): PlaybackOption[] {
   };
 
   // Live streams have no fixed-duration adaptiveFormats to build a VOD DASH/HLS
-  // manifest from (no init/index byte ranges) — /dash and /hls 502. The only
-  // playable source is the raw upstream live HLS URL. Mirrors
-  // apps/web/src/lib/pick-playback.ts's `detail.isLive` branch.
+  // manifest from (no init/index byte ranges) — /dash/…/manifest.mpd and /hls
+  // 502. OwnTube serves YouTube's own live DASH, via invidious-companion, at
+  // /dash/<id>/live.mpd; the raw upstream live HLS URL's segments 403, so it
+  // is only a last resort. Mirrors apps/web/src/lib/pick-playback.ts's
+  // `dash-live` branch.
   if (detail.isLive) {
+    addOption({
+      id: "live-dash",
+      label: "Live",
+      videoUrl: `${OWNTUBE_BASE_URL}/dash/${encodeURIComponent(detail.videoId)}/live.mpd`,
+      kind: "auto",
+    });
     if (detail.hlsUrl) {
       addOption({
         id: "live-hls",
-        label: "Live",
+        label: "Live (HLS)",
         videoUrl: detail.hlsUrl,
         kind: "auto",
       });
