@@ -7,8 +7,8 @@ Status: **in progress.** Written 2026-09-22.
 | 0 — groundwork (docs, deps, dead code) | done | `8dda771` |
 | 1 — lean-back playback (up next, queue/playlist play, continue watching) | done | `47f5bc6` |
 | 2 — player controls (quality, captions, speed, subscribe, save-to) | done | `9d460ff` |
-| 3 — browsing (home blocks, search, channels, library editing) | done | see git log |
-| 4 — distribution (server URL, versioning, updates, CI) | not started | — |
+| 3 — browsing (home blocks, search, channels, library editing) | done | `61a2d66` |
+| 4 — distribution (server URL, versioning, updates, CI) | done | see git log |
 | 5 — Android TV platform (Watch Next, deep links, Send to TV) | not started | — |
 | 6 — depth (description/comments, live polish, Shorts, profiles) | not started | — |
 
@@ -297,6 +297,39 @@ Needed before the APK can go to anyone else.
 - **CI:** a job that installs `apps/tv` on its own, typechecks with the web
   types resolvable, and runs `assembleRelease` for `arm64-v8a,armeabi-v7a`,
   uploading the APK as an artifact.
+
+**As built:**
+- Server:
+  - `ServerScreen` on a fresh install (no stored server and no token), or
+    from Settings → Change server or the sign-in screen's corner button.
+  - Connect checks `auth.session` answers with tRPC JSON, so a proxy's empty
+    200 or an HTML page is rejected.
+  - Changing server clears the token and the query cache.
+  - The tRPC link targets a placeholder URL and `fetch` substitutes the
+    current server, because tRPC wants a string when the link is built.
+  - TVs that were already signed in keep their built-in server without
+    being asked.
+- Versioning: app.json 0.2.0 / versionCode 2. Settings → About shows the
+  version, versionCode and `EXPO_PUBLIC_BUILD_ID`.
+- Updates: the simple check.
+  - The web serves `/tv/update.json` and `/tv/download/<file>.apk` from
+    `$OWNTUBE_TV_RELEASES_DIR` (default `data/tv-releases`). Both 404
+    until something is published.
+  - Settings → About shows "Update available … <url>" when the published
+    versionCode is higher.
+- Signing: `plugins/with-release-signing.js` signs release builds with
+  `OWNTUBE_TV_KEYSTORE` when set, otherwise the debug key as before. No
+  keystore was created; see the README.
+- CI: dropped. The repo carries no GitHub workflows (removed in `54a66d1`);
+  build APKs with the Docker recipe in `apps/tv/README.md`.
+- Verified on the emulator:
+  - Settings shows the server and the version.
+  - Change server → Server screen → Connect → sign-in, then pairing again.
+  - The web routes return 404 while nothing is published, including a
+    path-traversal attempt.
+- Not verified: a published update being offered (nothing was published to
+  the shared data dir), and the fresh-install path (the emulator still has
+  its data).
 
 ## Phase 5 — Android TV platform
 

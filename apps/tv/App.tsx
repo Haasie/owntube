@@ -3,24 +3,42 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, SafeAreaView, StyleSheet } from "react-native";
 import { Shell } from "@/components/Shell";
 import { clearToken, getToken, onSessionExpired } from "@/lib/auth-token";
+import { loadServerUrl } from "@/lib/config";
+import { persister, queryClient } from "@/lib/query-client";
 import { TrpcProvider } from "@/lib/trpc-react";
 import { WatchProgressProvider } from "@/lib/watch-progress";
 import { LoginScreen } from "@/screens/LoginScreen";
+import { ServerScreen } from "@/screens/ServerScreen";
 import { colors } from "@/theme";
 
-type AuthState = "checking" | "signedOut" | "signedIn";
+/** "server": choosing (or changing) the OwnTube server, before sign-in. */
+type AuthState = "checking" | "server" | "signedOut" | "signedIn";
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState>("checking");
 
   useEffect(() => {
-    getToken().then((token) => setAuth(token ? "signedIn" : "signedOut"));
+    Promise.all([loadServerUrl(), getToken()]).then(([server, token]) => {
+      // Ask for a server only on a fresh install: a TV already signed in
+      // predates the setting and keeps using the server it was built for.
+      setAuth(token ? "signedIn" : server ? "signedOut" : "server");
+    });
   }, []);
 
   useEffect(() => onSessionExpired(() => setAuth("signedOut")), []);
 
   const signOut = () => {
     clearToken().then(() => setAuth("signedOut"));
+  };
+
+  /** Another server's data must not linger: sign out and drop the cache. */
+  const changeServer = () => {
+    clearToken()
+      .then(() => {
+        queryClient.clear();
+        return persister.removeClient();
+      })
+      .finally(() => setAuth("server"));
   };
 
   return (
@@ -35,10 +53,15 @@ export default function App() {
           />
         ) : auth === "signedIn" ? (
           <WatchProgressProvider>
-            <Shell onSignOut={signOut} />
+            <Shell onSignOut={signOut} onChangeServer={changeServer} />
           </WatchProgressProvider>
+        ) : auth === "server" ? (
+          <ServerScreen onDone={() => setAuth("signedOut")} />
         ) : (
-          <LoginScreen onLoggedIn={() => setAuth("signedIn")} />
+          <LoginScreen
+            onLoggedIn={() => setAuth("signedIn")}
+            onChangeServer={() => setAuth("server")}
+          />
         )}
       </SafeAreaView>
     </TrpcProvider>

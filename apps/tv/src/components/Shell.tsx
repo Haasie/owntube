@@ -39,7 +39,13 @@ type Route =
     }
   | { name: "channel"; channelId: string };
 
-export function Shell({ onSignOut }: { onSignOut: () => void }) {
+export function Shell({
+  onSignOut,
+  onChangeServer,
+}: {
+  onSignOut: () => void;
+  onChangeServer: () => void;
+}) {
   useLongSelectDispatcher();
   const [section, setSection] = useState<Section>("home");
   const [stack, setStack] = useState<Route[]>([]);
@@ -211,7 +217,11 @@ export function Shell({ onSignOut }: { onSignOut: () => void }) {
     ) : section === "subscriptions" ? (
       <SubscriptionsScreen nav={nav} />
     ) : section === "settings" ? (
-      <SettingsScreen onSidebarChange={setSections} onSignOut={onSignOut} />
+      <SettingsScreen
+        onSidebarChange={setSections}
+        onSignOut={onSignOut}
+        onChangeServer={onChangeServer}
+      />
     ) : section === "playlists" ? (
       <PlaylistsScreen nav={nav} />
     ) : section === "queue" ? (

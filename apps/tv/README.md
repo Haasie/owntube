@@ -40,10 +40,16 @@ The typecheck resolves `@web/*` (`../web/src/*`), so the web app's deps must be 
 few runtime ones (`@web/lib/video-chapters`, `video-scrub-frames`, `query-retry`,
 `action-icon-paths`) must stay free of server code and heavy deps such as zod.
 
-## Build
+## Server
 
-The server URL is baked in at build time from `EXPO_PUBLIC_OWNTUBE_URL` (default
-`http://10.0.2.2:3000`, the host as seen from the emulator).
+On first run the TV asks for the OwnTube server (the address you open in a
+browser). It checks that an OwnTube answers there, then goes to sign-in.
+Settings → Server → Change server signs out and asks again. The build's
+`EXPO_PUBLIC_OWNTUBE_URL` (default `http://10.0.2.2:3000`, the host as seen from
+the emulator) is only the pre-filled suggestion. Installs that were already
+signed in before this setting existed keep using the URL they were built with.
+
+## Build
 
 ```bash
 EXPO_PUBLIC_OWNTUBE_URL=https://owntube.example.org CI=1 pnpm run prebuild   # EXPO_TV=1 expo prebuild
@@ -61,6 +67,32 @@ EXPO_PUBLIC_OWNTUBE_URL=https://owntube.example.org NODE_ENV=production \
 - RN 0.76 needs NDK 26.1 (`ndk;26.1.10909125`) and SDK 35 (`platforms;android-35`,
   `build-tools;35.0.0`).
 - For development against Metro instead: `pnpm run android`.
+- `EXPO_PUBLIC_BUILD_ID=<git sha>` shows the build in Settings → About.
+
+## Releases
+
+- **Version:** bump `version` and `android.versionCode` in `app.json` for every
+  release. The update check compares `versionCode`.
+- **Signing:** set `OWNTUBE_TV_KEYSTORE` (plus `OWNTUBE_TV_KEYSTORE_PASSWORD`,
+  optionally `OWNTUBE_TV_KEY_ALIAS` / `OWNTUBE_TV_KEY_PASSWORD`) for both
+  prebuild and gradle. `plugins/with-release-signing.js` then signs the release
+  build with that key instead of the debug key. Keep the keystore outside the
+  repo. Create one once:
+  `keytool -genkeypair -v -keystore owntube-tv.jks -alias owntube-tv -keyalg RSA -keysize 2048 -validity 10000`.
+  A TV with a debug-signed build has to uninstall it before the first
+  release-signed install, because Android refuses a signature change.
+- **Publishing an update:** put the APK and an `update.json` in the web app's
+  TV releases directory (`$OWNTUBE_TV_RELEASES_DIR`, default
+  `apps/web/data/tv-releases/`):
+
+  ```json
+  { "version": "0.3.0", "versionCode": 3,
+    "apkUrl": "/tv/download/owntube-tv-0.3.0.apk", "notes": "What changed" }
+  ```
+
+  The server serves it at `/tv/update.json` and the APK at
+  `/tv/download/<file>.apk`. Settings → About on the TV shows "Update
+  available" with the download URL, e.g. for the Downloader app.
 
 The Android toolchain does not need to be installed on the host: the
 `reactnativecommunity/react-native-android` Docker image works, with the repo copied (not

@@ -73,7 +73,14 @@ function QrMatrix({ modules }: { modules: QrModules }) {
  * Email + password on the remote's keyboard (`auth.deviceLogin`) remains as a
  * fallback. Either way the returned device JWT is stored.
  */
-export function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
+export function LoginScreen({
+  onLoggedIn,
+  onChangeServer,
+}: {
+  onLoggedIn: () => void;
+  /** Back to the server screen, for a TV pointed at the wrong server. */
+  onChangeServer?: () => void;
+}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -248,11 +255,25 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: () => void }) {
           </View>
         </View>
       </View>
+      {/* Outside the panel, which already fills the screen's height. */}
+      {onChangeServer ? (
+        <FocusButton
+          label={`Server: ${baseUrl().replace(/^https?:\/\//, "")} · Change`}
+          onPress={onChangeServer}
+          style={styles.serverButton}
+        />
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  serverButton: {
+    position: "absolute",
+    right: spacing.screen,
+    bottom: spacing.screen,
+    minHeight: 40,
+  },
   container: {
     flex: 1,
     alignItems: "center",
