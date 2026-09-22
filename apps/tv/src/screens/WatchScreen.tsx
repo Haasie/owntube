@@ -992,11 +992,10 @@ export function WatchScreen({
     menuWasOpenRef.current = open;
   }, [menuOpen, detailsOpen, revealControls]);
 
-  // Android's MediaSession (registered by expo-video for the hardware
-  // Play/Pause key) claims that key before it reaches our TVEventHandler, so
-  // pressing it pauses/resumes the player without ever calling
-  // togglePlayback() or revealControls() — the overlay silently misses it.
-  // Resync from the player's own event instead of the key event.
+  // Playback also starts and stops without a key press: a stall, audio focus
+  // lost to another app, or expo-video's MediaSession acting on a media button
+  // while this activity isn't in front (in front, the with-media-keys plugin
+  // claims those keys so only the handler below runs). Follow the player.
   useEffect(() => {
     const sub = player.addListener(
       "playingChange",
@@ -1969,9 +1968,12 @@ export function WatchScreen({
               <Animated.View
                 style={[styles.relatedRow, { height: relatedHeight }]}
               >
-                {/* Clipping doesn't affect child layout, so this reports the
-                  row's full height even while cropped. */}
+                {/* Taken out of flow so the animated height above can't bound
+                  it: an in-flow child measured exactly the cropped height, so
+                  the reveal animated the peek to itself and the rail never
+                  opened. Pinned to the top, the edge the crop keeps. */}
                 <View
+                  style={styles.relatedMeasure}
                   onLayout={(e) => {
                     relatedFullHeight.current = e.nativeEvent.layout.height;
                   }}
@@ -2121,6 +2123,7 @@ const styles = StyleSheet.create({
   // Height is animated; the overlay is bottom-anchored, so growing the row
   // pushes the controls up and brings the focused card into view.
   relatedRow: { marginTop: spacing.md, overflow: "hidden" },
+  relatedMeasure: { position: "absolute", top: 0, left: 0, right: 0 },
   trackWrap: { position: "relative" },
   // Padding gives the focus ring somewhere to sit without moving the bar.
   // Deliberately no focus ring: the bar shows selection by turning brand-red,
