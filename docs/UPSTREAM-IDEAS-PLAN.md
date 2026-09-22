@@ -36,15 +36,15 @@ on `upstream/main` (`git show upstream/main:apps/tv/src/…`).
 | idea | upstream source | our phase | state |
 |---|---|---|---|
 | Keep visited screens mounted (focus + scroll survive Back; player stays mounted under a channel page, paused via an `active` prop) | `components/Shell.tsx` (`ScreenLayer`, `TVFocusGuideView`) | 3 | **done** — `Shell.tsx` layers + `lib/screen-active.tsx`; Shorts and Settings still mount only while shown |
-| Recent searches + suggestion chips | `lib/recent-searches.ts`, `screens/SearchScreen.tsx` | 3 | in progress (uncommitted phase 3) |
-| Server URL set on the device, no rebuild | `lib/config.ts` (placeholder origin rewritten in a `fetch` wrapper, URL in SecureStore) | 4 | in progress (`ServerScreen`, uncommitted) |
+| Recent searches + suggestion chips | `lib/recent-searches.ts`, `screens/SearchScreen.tsx` | 3 | **done** (phase 3, `61a2d66`) |
+| Server URL set on the device, no rebuild | `lib/config.ts` (placeholder origin rewritten in a `fetch` wrapper, URL in SecureStore) | 4 | **done** (phase 4, `9c9dadf`) |
 | Hero thumbnail fallback maxres → hq720 → hq on `onError` | `lib/hero-thumbnail-url.ts`, `components/HomeHero.tsx` | 3 | not started — ~40 lines |
 | Retry button on every error state | `lib/use-infinite-feed.ts`, screens | 3 | not started — react-query already exposes `refetch` |
 | Dim watched cards | `components/VideoCard.tsx` | 3 | not started — we already draw the progress bar |
 | Channel Videos / Shorts tabs + Subscribe | `screens/ChannelScreen.tsx` | 3 | covered by our phase 3 channel tabs |
-| Library: Saved + Liked + playlists on one screen | `screens/LibraryScreen.tsx` | 3 | Saved in progress; Liked needs `interactions.list` (see web below) |
-| Shorts pager (D-pad up/down, `markSeen`, prefetch next) | `screens/ShortsScreen.tsx` | 6 | not started — take the pager, play via `/dash/<id>`; the server inputs already match |
-| Read-only top comments under the player | `components/player-comments.tsx` | 6 | not started — rows must become focusable for D-pad scrolling |
+| Library: Saved + Liked + playlists on one screen | `screens/LibraryScreen.tsx` | 3 | Saved **done** (phase 3); Liked still needs `interactions.list` (see web below) |
+| Shorts pager (D-pad up/down, `markSeen`, prefetch next) | `screens/ShortsScreen.tsx` | 6 | **done** (phase 6, `bd11f86`: DASH pager + `markSeen`) |
+| Read-only top comments under the player | `components/player-comments.tsx` | 6 | **done** (phase 6: `DetailsPanel` description + comments tabs) |
 
 **Skip** upstream's player internals: `playback-options.ts`,
 `player-quality-menu`, `player-progress-bar`, `player-up-next`,
