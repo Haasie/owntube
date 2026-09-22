@@ -6,7 +6,7 @@ import {
   type Section,
   Sidebar,
 } from "@/components/Sidebar";
-import type { Nav } from "@/lib/navigation";
+import type { Nav, OpenVideoOptions, PlayContext } from "@/lib/navigation";
 import { loadSidebarPrefs } from "@/lib/sidebar-prefs";
 import { useResumeLookup, useWatchProgressRefresh } from "@/lib/watch-progress";
 import { ChannelScreen } from "@/screens/ChannelScreen";
@@ -27,7 +27,12 @@ import { colors, spacing } from "@/theme";
  * watch/channel push onto a stack that remote Back pops (exits at the root).
  */
 type Route =
-  | { name: "watch"; videoId: string; resumeSeconds?: number }
+  | {
+      name: "watch";
+      videoId: string;
+      resumeSeconds?: number;
+      context?: PlayContext;
+    }
   | { name: "channel"; channelId: string };
 
 export function Shell({ onSignOut }: { onSignOut: () => void }) {
@@ -61,23 +66,38 @@ export function Shell({ onSignOut }: { onSignOut: () => void }) {
   const lookupResume = useResumeLookup();
   const refreshProgress = useWatchProgressRefresh();
 
+  // Callers that know a position (History) pass one; everything else
+  // resumes from the stored watch position, like the web app.
+  const watchRoute = useCallback(
+    (videoId: string, options?: OpenVideoOptions): Route => ({
+      name: "watch",
+      videoId,
+      resumeSeconds: options?.resumeSeconds ?? lookupResume(videoId),
+      context: options?.context,
+    }),
+    [lookupResume],
+  );
+
+  /**
+   * Next/previous within a play context swaps the video in place, so Back
+   * still returns to wherever playback started rather than stepping back
+   * through every video watched since.
+   */
+  const replaceVideo = useCallback(
+    (videoId: string, options?: OpenVideoOptions) => {
+      setStack((s) => [...s.slice(0, -1), watchRoute(videoId, options)]);
+    },
+    [watchRoute],
+  );
+
   const nav: Nav = useMemo(
     () => ({
-      // Callers that know a position (History) pass one; everything else
-      // resumes from the stored watch position, like the web app.
-      openVideo: (videoId, resumeSeconds) =>
-        setStack((s) => [
-          ...s,
-          {
-            name: "watch",
-            videoId,
-            resumeSeconds: resumeSeconds ?? lookupResume(videoId),
-          },
-        ]),
+      openVideo: (videoId, options) =>
+        setStack((s) => [...s, watchRoute(videoId, options)]),
       openChannel: (channelId) =>
         setStack((s) => [...s, { name: "channel", channelId }]),
     }),
-    [lookupResume],
+    [watchRoute],
   );
 
   /**
@@ -155,11 +175,16 @@ export function Shell({ onSignOut }: { onSignOut: () => void }) {
   }, []);
 
   if (top?.name === "watch") {
+    // Keyed so each video gets a fresh player and state: its predecessor's
+    // unmount records that video's progress, and nothing carries over.
     return (
       <WatchScreen
+        key={`${stack.length}:${top.videoId}`}
         videoId={top.videoId}
         resumeSeconds={top.resumeSeconds}
+        context={top.context}
         onOpenVideo={nav.openVideo}
+        onReplaceVideo={replaceVideo}
         onOpenChannel={nav.openChannel}
         onBack={pop}
       />

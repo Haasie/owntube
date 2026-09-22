@@ -18,7 +18,8 @@ const ROW_SIZE = 12;
 
 type Props = {
   feed: InfiniteFeed;
-  onSelect: (videoId: string) => void;
+  /** Gets the whole list too, so the player can play on through it. */
+  onSelect: (videoId: string, videos: UnifiedVideo[]) => void;
   header?: ReactNode;
   emptyText?: string;
   videos?: UnifiedVideo[];
@@ -54,8 +55,10 @@ export function CarouselFeed({
   // from re-rendering on every screen render.
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const listVideosRef = useRef(listVideos);
+  listVideosRef.current = listVideos;
   const handleSelect = useCallback(
-    (videoId: string) => onSelectRef.current(videoId),
+    (videoId: string) => onSelectRef.current(videoId, listVideosRef.current),
     [],
   );
   const renderItem = useCallback<ListRenderItem<UnifiedVideo[]>>(

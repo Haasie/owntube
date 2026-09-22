@@ -104,7 +104,9 @@ export function ChannelScreen({
   return (
     <CarouselFeed
       feed={feed}
-      onSelect={(videoId) => nav.openVideo(videoId)}
+      onSelect={(videoId, videos) =>
+        nav.openVideo(videoId, { context: { source: "feed", videos } })
+      }
       header={header}
       emptyText="This channel has no videos."
     />

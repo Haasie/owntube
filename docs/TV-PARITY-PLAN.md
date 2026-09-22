@@ -1,11 +1,11 @@
 # OwnTube TV ↔ web / YouTube TV parity: phased plan
 
-Status: **not started.** Written 2026-09-22.
+Status: **in progress.** Written 2026-09-22.
 
 | phase | state | commits |
 |---|---|---|
-| 0 — groundwork (docs, deps, dead code) | not started | — |
-| 1 — lean-back playback (up next, queue/playlist play, continue watching) | not started | — |
+| 0 — groundwork (docs, deps, dead code) | done | `8dda771` |
+| 1 — lean-back playback (up next, queue/playlist play, continue watching) | done | see git log |
 | 2 — player controls (quality, captions, speed, subscribe, save-to) | not started | — |
 | 3 — browsing (home blocks, search, channels, library editing) | not started | — |
 | 4 — distribution (server URL, versioning, updates, CI) | not started | — |
@@ -111,6 +111,23 @@ new procedure; `watch-progress.tsx` already loads the data.
 **Verify:** on the emulator, play a 2-item playlist to the end with autoplay on
 and off; next/previous keys; queue item consumed; continue-watching row
 updates after backing out mid-video.
+
+**As built:**
+- The context is a snapshot of the list the video was started from
+  (`PlayContext` in `lib/navigation.ts`); next/previous replace the route, so
+  Back still returns to where playback began.
+- Only a video opened without a context runs on into its first related
+  video. A queue or playlist stops at its end.
+- The queue isn't consumed on the client: `history.upsertEvent` with
+  `completed` already removes the video from the queue on the server, and the
+  player sends that on `playToEnd`.
+- Previous restarts the video after its first 5 s, like a CD player.
+- The long-press at the end of the bar was dropped: long left/right already
+  hold-scrub.
+- Verified on the emulator: the up-next card after a feed video, Play now,
+  Previous, Play all on the queue, and the Continue watching row. Not
+  exercised: queue consumption (to avoid editing the real queue) and the
+  countdown (`autoplayNext` is off on the test account).
 
 ## Phase 2 — player controls
 

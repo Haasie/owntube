@@ -41,7 +41,9 @@ export function HistoryScreen({ nav }: { nav: Nav }) {
     <CarouselFeed
       feed={feed}
       onSelect={(videoId) =>
-        nav.openVideo(videoId, resumeRef.current.get(videoId))
+        nav.openVideo(videoId, {
+          resumeSeconds: resumeRef.current.get(videoId),
+        })
       }
       header={<Text style={styles.heading}>History</Text>}
       emptyText="Nothing watched yet."

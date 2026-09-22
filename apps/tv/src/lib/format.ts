@@ -120,3 +120,17 @@ export function channelInitial(name: string | undefined): string {
   const first = name?.trim().charAt(0);
   return first ? first.toUpperCase() : "o";
 }
+
+/**
+ * A video's thumbnail, falling back to YouTube's own still by id when the row
+ * carries none (history rows, for one, leave it to the client — as on the web).
+ */
+export function videoThumbnailUrl(video: {
+  videoId: string;
+  thumbnailUrl?: string;
+}): string {
+  return (
+    video.thumbnailUrl ??
+    `https://i.ytimg.com/vi/${encodeURIComponent(video.videoId)}/hqdefault.jpg`
+  );
+}

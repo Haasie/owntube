@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { CarouselFeed } from "@/components/CarouselFeed";
+import { ContinueWatchingRow } from "@/components/ContinueWatchingRow";
 import { HomeHero } from "@/components/HomeHero";
 import type { Nav } from "@/lib/navigation";
 import { trpcClient } from "@/lib/trpc";
@@ -82,8 +83,13 @@ export function HomeScreen({ nav }: { nav: Nav }) {
       <HomeHero
         video={heroVideo}
         label={labels.hero}
-        onPress={(videoId) => nav.openVideo(videoId)}
+        onPress={(videoId) =>
+          nav.openVideo(videoId, {
+            context: { source: "feed", videos: feed.videos },
+          })
+        }
       />
+      <ContinueWatchingRow nav={nav} />
       {railVideos.length > 0 ? (
         <View style={styles.railHeader}>
           <View>
@@ -103,7 +109,11 @@ export function HomeScreen({ nav }: { nav: Nav }) {
   return (
     <CarouselFeed
       feed={feed}
-      onSelect={(videoId) => nav.openVideo(videoId)}
+      onSelect={(videoId) =>
+        nav.openVideo(videoId, {
+          context: { source: "feed", videos: feed.videos },
+        })
+      }
       header={header}
       videos={railVideos}
       preferFirstRowFocus={false}

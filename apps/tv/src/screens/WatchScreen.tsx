@@ -32,6 +32,7 @@ import {
 } from "react-native";
 import { FocusButton } from "@/components/FocusButton";
 import { IconButton } from "@/components/IconButton";
+import { UpNext } from "@/components/UpNext";
 import { VideoRow } from "@/components/VideoRow";
 import {
   audioLanguageOptions,
@@ -41,6 +42,11 @@ import { getToken } from "@/lib/auth-token";
 import { OWNTUBE_BASE_URL } from "@/lib/config";
 import { errorMessage } from "@/lib/error-message";
 import { channelInitial, formatTime, formatViews } from "@/lib/format";
+import {
+  contextNeighbours,
+  type OpenVideoOptions,
+  type PlayContext,
+} from "@/lib/navigation";
 import { queryClient } from "@/lib/query-client";
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
@@ -151,19 +157,29 @@ function pickDefaultOptionIndex(
  * offset, auto-skips SponsorBlock segments, records watch progress to history,
  * and shows a related-videos rail + channel link when paused.
  *
- * Stream selection prefers HLS auto quality, then muxed progressive MP4 streams.
- * Adaptive-only HD rows are played as synchronized video-only + audio sources.
+ * Stream selection prefers server DASH, then HLS, then muxed progressive MP4
+ * streams. Adaptive-only HD rows are played as synchronized video-only + audio
+ * sources.
+ *
+ * At the end it offers the next video of its play context (queue, playlist,
+ * feed), or the first related video when it has none; the remote's next and
+ * previous keys move through the same list.
  */
 export function WatchScreen({
   videoId,
   resumeSeconds,
+  context,
   onOpenVideo,
+  onReplaceVideo,
   onOpenChannel,
   onBack,
 }: {
   videoId: string;
   resumeSeconds?: number;
+  context?: PlayContext;
   onOpenVideo: (videoId: string) => void;
+  /** Swaps this video for another in place (next/previous). */
+  onReplaceVideo: (videoId: string, options?: OpenVideoOptions) => void;
   onOpenChannel: (channelId: string) => void;
   onBack: () => void;
 }) {
@@ -190,6 +206,8 @@ export function WatchScreen({
    */
   const [audioLangIndex, setAudioLangIndex] = useState(0);
   const [audioToast, setAudioToast] = useState<string | null>(null);
+  /** Playback reached the end (and wasn't dismissed since). */
+  const [ended, setEnded] = useState(false);
   const audioToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Scrubbing: left/right move a pending position that only commits on release,
   // so holding the D-pad sweeps the bar instead of firing a seek per press.
@@ -238,11 +256,13 @@ export function WatchScreen({
     sponsorBlockEnabled: boolean;
     sponsorBlockAutoSkip: boolean;
     sponsorBlockCategories: SponsorBlockCategory[];
+    autoplayNext: boolean;
   }>({
     maxHeight: DEFAULT_HEIGHT,
     sponsorBlockEnabled: true,
     sponsorBlockAutoSkip: true,
     sponsorBlockCategories: DEFAULT_SKIP_CATEGORIES,
+    autoplayNext: true,
   });
   const scrubRef = useRef<number | null>(null);
   const holdTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -344,6 +364,7 @@ export function WatchScreen({
           sponsorBlockEnabled: st.sponsorBlockEnabled,
           sponsorBlockAutoSkip: st.sponsorBlockAutoSkip,
           sponsorBlockCategories: st.sponsorBlockCategories,
+          autoplayNext: st.autoplayNext,
         };
       })
       // Defaults already sit in the ref; a settings failure shouldn't block play.
@@ -449,6 +470,22 @@ export function WatchScreen({
   const relatedQuery = trpc.video.related.useQuery({ videoId });
   const related: UnifiedVideo[] = relatedQuery.data?.videos ?? NO_VIDEOS;
 
+  // A context ends where it ends; only a video opened on its own runs on into
+  // its related videos.
+  const neighbours = contextNeighbours(context, videoId);
+  const nextVideo = context ? neighbours.next : related[0];
+  const previousVideo = neighbours.previous;
+  const playNext = useCallback(() => {
+    if (nextVideo) onReplaceVideo(nextVideo.videoId, { context });
+  }, [nextVideo, context, onReplaceVideo]);
+  const playNextRef = useRef(playNext);
+  playNextRef.current = playNext;
+  // Only an end with somewhere to go shows the card; without one the controls
+  // simply stay up, paused at the end.
+  const showUpNext = ended && nextVideo !== undefined;
+  const showUpNextRef = useRef(false);
+  showUpNextRef.current = showUpNext;
+
   // Load the stream and resume from the saved offset.
   useEffect(() => {
     if (state.status !== "ready") return;
@@ -474,8 +511,17 @@ export function WatchScreen({
       audioPlayer.pause();
       audioPlayer.replace(null);
     }
-    const startSeconds = pendingSeekRef.current ?? resumeSeconds;
+    const pendingSeek = pendingSeekRef.current;
     pendingSeekRef.current = null;
+    // A saved position in the last seconds would end the video on arrival —
+    // start it over instead. (The resume lookup can't always tell: some
+    // progress rows carry no duration.)
+    const total = state.detail.durationSeconds ?? 0;
+    const resumeUsable =
+      resumeSeconds !== undefined &&
+      !(total > 0 && resumeSeconds > total - RESUME_END_GUARD_SECONDS);
+    const startSeconds =
+      pendingSeek ?? (resumeUsable ? resumeSeconds : undefined);
     if (startSeconds && startSeconds > 5) {
       player.currentTime = startSeconds;
       if (selectedOption.kind === "split")
@@ -529,6 +575,10 @@ export function WatchScreen({
    */
   useEffect(() => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (showUpNextRef.current) {
+        setEnded(false);
+        return true;
+      }
       if (!controlsVisibleRef.current) return false;
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
       setControlsVisible(false);
@@ -581,6 +631,30 @@ export function WatchScreen({
         .catch(() => {});
     };
   }, []);
+
+  /**
+   * The end: record the video as watched straight away (the server also drops
+   * it from the queue then), and offer what comes next.
+   */
+  useEffect(() => {
+    const sub = player.addListener("playToEnd", () => {
+      const detail = detailRef.current;
+      if (detail?.channelId) {
+        trpcClient.history.upsertEvent
+          .mutate({
+            videoId: detail.videoId,
+            channelId: detail.channelId,
+            durationWatched: Math.floor(currentTimeRef.current),
+            completed: true,
+            videoDurationSeconds: detail.durationSeconds,
+            videoTitle: detail.title,
+          })
+          .catch(() => {});
+      }
+      setEnded(true);
+    });
+    return () => sub.remove();
+  }, [player]);
 
   const fallbackToStablePlayback = useCallback(() => {
     if (state.status !== "ready") return;
@@ -800,6 +874,18 @@ export function WatchScreen({
       .catch(() => {});
   };
 
+  /** Previous restarts the video unless it has barely begun, like a CD player. */
+  const playPrevious = () => {
+    if (currentTimeRef.current > RESTART_THRESHOLD_SECONDS || !previousVideo) {
+      player.currentTime = 0;
+      if (selectedOptionRef.current?.kind === "split") {
+        audioPlayer.currentTime = 0;
+      }
+      return;
+    }
+    onReplaceVideo(previousVideo.videoId, { context });
+  };
+
   const seekBy = (seconds: number) => {
     player.seekBy(seconds);
     if (selectedOptionRef.current?.kind === "split") {
@@ -814,6 +900,8 @@ export function WatchScreen({
    */
   useTVEventHandler((event) => {
     if (event.eventType === "focus" || event.eventType === "blur") return;
+    // The up-next card owns the screen; its buttons take the D-pad.
+    if (showUpNextRef.current) return;
     revealControls();
     // ACTION_UP is 1; the same long-press event fires on press and release.
     const isKeyUp = Number(event.eventKeyAction) === 1;
@@ -833,6 +921,12 @@ export function WatchScreen({
         break;
       case "rewind":
         seekBy(-10);
+        break;
+      case "next":
+        if (!isKeyUp) playNextRef.current();
+        break;
+      case "previous":
+        if (!isKeyUp) playPrevious();
         break;
       // Left/right scrubs when the overlay is hidden (nothing to navigate) or
       // when the scrubber itself holds focus; anywhere else it moves between
@@ -956,228 +1050,242 @@ export function WatchScreen({
         </View>
       ) : null}
 
-      {/* Controls stay mounted (so a focused button always catches the next key
-          to re-reveal them); visibility is just opacity. */}
-      <View
-        style={[StyleSheet.absoluteFill, { opacity: controlsVisible ? 1 : 0 }]}
-        pointerEvents="box-none"
-      >
-        <View style={styles.topInfo} pointerEvents="none">
-          <Text style={styles.title} numberOfLines={2}>
-            {detail.title}
-          </Text>
-          <Text style={styles.meta} numberOfLines={1}>
-            {[detail.channelName, formatViews(detail.viewCount)]
-              .filter(Boolean)
-              .join(" \u2022 ")}
-          </Text>
-        </View>
-
-        <View style={styles.overlay}>
-          <View style={styles.timesRow}>
-            <Text style={styles.time}>{formatTime(scrubTarget)}</Text>
-            {chapterTitle ? (
-              <Text style={styles.chapterTitle} numberOfLines={1}>
-                {chapterTitle}
-              </Text>
-            ) : null}
-            <Text style={styles.time}>{formatTime(totalSeconds)}</Text>
+      {showUpNext && nextVideo ? (
+        <UpNext
+          video={nextVideo}
+          contextLabel={context?.label}
+          autoplay={settingsRef.current.autoplayNext}
+          onPlay={playNext}
+          onCancel={() => setEnded(false)}
+        />
+      ) : (
+        // Controls stay mounted (so a focused button always catches the next key
+        // to re-reveal them); visibility is just opacity. The up-next card
+        // replaces them, so focus can't wander into hidden buttons behind it.
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            { opacity: controlsVisible ? 1 : 0 },
+          ]}
+          pointerEvents="box-none"
+        >
+          <View style={styles.topInfo} pointerEvents="none">
+            <Text style={styles.title} numberOfLines={2}>
+              {detail.title}
+            </Text>
+            <Text style={styles.meta} numberOfLines={1}>
+              {[detail.channelName, formatViews(detail.viewCount)]
+                .filter(Boolean)
+                .join(" \u2022 ")}
+            </Text>
           </View>
-          {/* Wrapper so the preview anchors to the bar, not the whole overlay. */}
-          <View style={styles.trackWrap}>
-            {scrubSeconds !== null && detail.storyboard ? (
-              <View
-                style={[
-                  styles.previewRow,
-                  { left: `${clampPreviewPct(progressPct)}%` },
-                ]}
-                pointerEvents="none"
-              >
-                <ScrubPreview
-                  storyboard={detail.storyboard}
-                  atSeconds={scrubSeconds}
-                />
-              </View>
-            ) : null}
-            <Pressable
-              ref={scrubberRef}
-              onLayout={() => {
-                if (scrubberHandle === null) {
-                  setScrubberHandle(findNodeHandle(scrubberRef.current));
-                }
-              }}
-              nextFocusLeft={scrubberHandle ?? undefined}
-              nextFocusRight={scrubberHandle ?? undefined}
-              hasTVPreferredFocus
-              onFocus={() => setScrubberFocused(true)}
-              onBlur={() => setScrubberFocused(false)}
-              onPress={commitScrubOrToggle}
-              style={styles.scrubber}
-            >
-              <View
-                style={[styles.track, scrubberFocused && styles.trackActive]}
-              >
+
+          <View style={styles.overlay}>
+            <View style={styles.timesRow}>
+              <Text style={styles.time}>{formatTime(scrubTarget)}</Text>
+              {chapterTitle ? (
+                <Text style={styles.chapterTitle} numberOfLines={1}>
+                  {chapterTitle}
+                </Text>
+              ) : null}
+              <Text style={styles.time}>{formatTime(totalSeconds)}</Text>
+            </View>
+            {/* Wrapper so the preview anchors to the bar, not the whole overlay. */}
+            <View style={styles.trackWrap}>
+              {scrubSeconds !== null && detail.storyboard ? (
                 <View
                   style={[
-                    styles.trackFill,
-                    scrubberFocused && styles.trackFillActive,
-                    { width: `${progressPct}%` },
+                    styles.previewRow,
+                    { left: `${clampPreviewPct(progressPct)}%` },
                   ]}
-                />
-              </View>
-              {totalSeconds > 0
-                ? chapters.map((chapter) => (
-                    <View
-                      key={chapter.startSeconds}
-                      pointerEvents="none"
-                      style={[
-                        styles.chapterTick,
-                        {
-                          left: `${Math.min(
-                            100,
-                            (chapter.startSeconds / totalSeconds) * 100,
-                          )}%`,
-                        },
-                      ]}
-                    />
-                  ))
-                : null}
-              {scrubberFocused ? (
-                <View
-                  style={[styles.knob, { left: `${progressPct}%` }]}
                   pointerEvents="none"
-                />
-              ) : null}
-            </Pressable>
-          </View>
-
-          <View style={styles.controlRow}>
-            <View style={styles.sideCluster}>
-              {detail.channelId ? (
-                <Pressable
-                  onFocus={() => {
-                    setChannelFocused(true);
-                    onButtonFocusChange(true);
-                  }}
-                  onBlur={() => {
-                    setChannelFocused(false);
-                    onButtonFocusChange(false);
-                  }}
-                  onPress={() => onOpenChannel(detail.channelId as string)}
-                  style={[
-                    styles.avatarButton,
-                    channelFocused && styles.avatarButtonFocused,
-                  ]}
                 >
-                  {detail.channelAvatarUrl ? (
-                    <Image
-                      source={{ uri: detail.channelAvatarUrl }}
-                      style={styles.avatar}
-                    />
-                  ) : (
-                    <View style={[styles.avatar, styles.avatarFallback]}>
-                      <Text style={styles.avatarInitial}>
-                        {channelInitial(detail.channelName)}
-                      </Text>
-                    </View>
-                  )}
-                </Pressable>
+                  <ScrubPreview
+                    storyboard={detail.storyboard}
+                    atSeconds={scrubSeconds}
+                  />
+                </View>
               ) : null}
-            </View>
-
-            <View style={styles.transport}>
-              <IconButton
-                icon="rotate-ccw"
-                action="skip"
-                onPress={() => seekBy(-10)}
-                onFocusChange={onButtonFocusChange}
-              />
-              <IconButton
-                icon={isPlaying ? "pause" : "play"}
-                action={isPlaying ? "pause" : "play"}
-                large
-                onPress={togglePlayback}
-                onFocusChange={onButtonFocusChange}
-              />
-              <IconButton
-                icon="rotate-cw"
-                action="skipForward"
-                onPress={() => seekBy(10)}
-                onFocusChange={onButtonFocusChange}
-              />
-            </View>
-
-            {/* Mirrors the web player's action set. */}
-            <View style={styles.actions}>
-              <IconButton
-                icon="thumbs-up"
-                action="like"
-                active={rating === "like"}
-                onPress={() => setRatingValue("like")}
-                onFocusChange={onButtonFocusChange}
-              />
-              <IconButton
-                icon="thumbs-down"
-                action="dislike"
-                active={rating === "dislike"}
-                onPress={() => setRatingValue("dislike")}
-                onFocusChange={onButtonFocusChange}
-              />
-              <IconButton
-                icon={queued ? "check" : "plus"}
-                active={queued}
-                onPress={toggleQueued}
-                onFocusChange={onButtonFocusChange}
-              />
-              <IconButton
-                icon="bookmark"
-                active={saved}
-                onPress={toggleSaved}
-                onFocusChange={onButtonFocusChange}
-              />
-              {/* Only offered when the stream actually carries subtitles. */}
-              {hasSubtitles ? (
-                <IconButton
-                  icon="type"
-                  action="captions"
-                  active={subtitlesOn}
-                  onPress={toggleSubtitles}
-                  onFocusChange={onButtonFocusChange}
-                />
-              ) : null}
-              {/* Dubbed videos: cycle audio language (original is default). */}
-              {canChooseAudioLanguage ? (
-                <IconButton
-                  icon="globe"
-                  active={audioLangIndex > 0}
-                  onPress={cycleAudioLanguage}
-                  onFocusChange={onButtonFocusChange}
-                />
-              ) : null}
-            </View>
-          </View>
-
-          {related.length > 0 ? (
-            <Animated.View
-              style={[styles.relatedRow, { height: relatedHeight }]}
-            >
-              {/* Clipping doesn't affect child layout, so this reports the
-                  row's full height even while cropped. */}
-              <View
-                onLayout={(e) => {
-                  relatedFullHeight.current = e.nativeEvent.layout.height;
+              <Pressable
+                ref={scrubberRef}
+                onLayout={() => {
+                  if (scrubberHandle === null) {
+                    setScrubberHandle(findNodeHandle(scrubberRef.current));
+                  }
                 }}
+                nextFocusLeft={scrubberHandle ?? undefined}
+                nextFocusRight={scrubberHandle ?? undefined}
+                hasTVPreferredFocus
+                onFocus={() => setScrubberFocused(true)}
+                onBlur={() => setScrubberFocused(false)}
+                onPress={commitScrubOrToggle}
+                style={styles.scrubber}
               >
-                <VideoRow
-                  videos={related}
-                  onSelect={onOpenVideo}
-                  onCardFocusChange={onRelatedCardFocusChange}
+                <View
+                  style={[styles.track, scrubberFocused && styles.trackActive]}
+                >
+                  <View
+                    style={[
+                      styles.trackFill,
+                      scrubberFocused && styles.trackFillActive,
+                      { width: `${progressPct}%` },
+                    ]}
+                  />
+                </View>
+                {totalSeconds > 0
+                  ? chapters.map((chapter) => (
+                      <View
+                        key={chapter.startSeconds}
+                        pointerEvents="none"
+                        style={[
+                          styles.chapterTick,
+                          {
+                            left: `${Math.min(
+                              100,
+                              (chapter.startSeconds / totalSeconds) * 100,
+                            )}%`,
+                          },
+                        ]}
+                      />
+                    ))
+                  : null}
+                {scrubberFocused ? (
+                  <View
+                    style={[styles.knob, { left: `${progressPct}%` }]}
+                    pointerEvents="none"
+                  />
+                ) : null}
+              </Pressable>
+            </View>
+
+            <View style={styles.controlRow}>
+              <View style={styles.sideCluster}>
+                {detail.channelId ? (
+                  <Pressable
+                    onFocus={() => {
+                      setChannelFocused(true);
+                      onButtonFocusChange(true);
+                    }}
+                    onBlur={() => {
+                      setChannelFocused(false);
+                      onButtonFocusChange(false);
+                    }}
+                    onPress={() => onOpenChannel(detail.channelId as string)}
+                    style={[
+                      styles.avatarButton,
+                      channelFocused && styles.avatarButtonFocused,
+                    ]}
+                  >
+                    {detail.channelAvatarUrl ? (
+                      <Image
+                        source={{ uri: detail.channelAvatarUrl }}
+                        style={styles.avatar}
+                      />
+                    ) : (
+                      <View style={[styles.avatar, styles.avatarFallback]}>
+                        <Text style={styles.avatarInitial}>
+                          {channelInitial(detail.channelName)}
+                        </Text>
+                      </View>
+                    )}
+                  </Pressable>
+                ) : null}
+              </View>
+
+              <View style={styles.transport}>
+                <IconButton
+                  icon="rotate-ccw"
+                  action="skip"
+                  onPress={() => seekBy(-10)}
+                  onFocusChange={onButtonFocusChange}
+                />
+                <IconButton
+                  icon={isPlaying ? "pause" : "play"}
+                  action={isPlaying ? "pause" : "play"}
+                  large
+                  onPress={togglePlayback}
+                  onFocusChange={onButtonFocusChange}
+                />
+                <IconButton
+                  icon="rotate-cw"
+                  action="skipForward"
+                  onPress={() => seekBy(10)}
+                  onFocusChange={onButtonFocusChange}
                 />
               </View>
-            </Animated.View>
-          ) : null}
+
+              {/* Mirrors the web player's action set. */}
+              <View style={styles.actions}>
+                <IconButton
+                  icon="thumbs-up"
+                  action="like"
+                  active={rating === "like"}
+                  onPress={() => setRatingValue("like")}
+                  onFocusChange={onButtonFocusChange}
+                />
+                <IconButton
+                  icon="thumbs-down"
+                  action="dislike"
+                  active={rating === "dislike"}
+                  onPress={() => setRatingValue("dislike")}
+                  onFocusChange={onButtonFocusChange}
+                />
+                <IconButton
+                  icon={queued ? "check" : "plus"}
+                  active={queued}
+                  onPress={toggleQueued}
+                  onFocusChange={onButtonFocusChange}
+                />
+                <IconButton
+                  icon="bookmark"
+                  active={saved}
+                  onPress={toggleSaved}
+                  onFocusChange={onButtonFocusChange}
+                />
+                {/* Only offered when the stream actually carries subtitles. */}
+                {hasSubtitles ? (
+                  <IconButton
+                    icon="type"
+                    action="captions"
+                    active={subtitlesOn}
+                    onPress={toggleSubtitles}
+                    onFocusChange={onButtonFocusChange}
+                  />
+                ) : null}
+                {/* Dubbed videos: cycle audio language (original is default). */}
+                {canChooseAudioLanguage ? (
+                  <IconButton
+                    icon="globe"
+                    active={audioLangIndex > 0}
+                    onPress={cycleAudioLanguage}
+                    onFocusChange={onButtonFocusChange}
+                  />
+                ) : null}
+              </View>
+            </View>
+
+            {related.length > 0 ? (
+              <Animated.View
+                style={[styles.relatedRow, { height: relatedHeight }]}
+              >
+                {/* Clipping doesn't affect child layout, so this reports the
+                  row's full height even while cropped. */}
+                <View
+                  onLayout={(e) => {
+                    relatedFullHeight.current = e.nativeEvent.layout.height;
+                  }}
+                >
+                  <VideoRow
+                    videos={related}
+                    onSelect={onOpenVideo}
+                    onCardFocusChange={onRelatedCardFocusChange}
+                  />
+                </View>
+              </Animated.View>
+            ) : null}
+          </View>
         </View>
-      </View>
+      )}
     </View>
   );
 }
@@ -1203,6 +1311,12 @@ const TV_WIDTH_DP = 960;
 /** How often playback position is pushed to the server, and the floor for it. */
 const PROGRESS_REPORT_MS = 15_000;
 const PROGRESS_MIN_SECONDS = 5;
+
+/** A resume point this close to the end starts the video over instead. */
+const RESUME_END_GUARD_SECONDS = 15;
+
+/** Past this, "previous" restarts the video instead of going back one. */
+const RESTART_THRESHOLD_SECONDS = 5;
 
 /** Playhead knob shown while the scrubber holds focus. */
 const SCRUB_KNOB = 18;

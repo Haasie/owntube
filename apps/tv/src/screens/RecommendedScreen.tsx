@@ -31,7 +31,9 @@ export function RecommendedScreen({ nav }: { nav: Nav }) {
   return (
     <CarouselFeed
       feed={feed}
-      onSelect={(videoId) => nav.openVideo(videoId)}
+      onSelect={(videoId, videos) =>
+        nav.openVideo(videoId, { context: { source: "feed", videos } })
+      }
       header={<Text style={styles.heading}>Recommended</Text>}
       emptyText="Nothing recommended yet — watch a few videos first."
     />

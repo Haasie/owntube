@@ -7,6 +7,7 @@ import {
   formatPublishedLabel,
   formatThumbnailBadge,
   formatViews,
+  videoThumbnailUrl,
 } from "@/lib/format";
 import { useWatchProgress } from "@/lib/watch-progress";
 import { colors, focus, fontSize, monoFont, radius, spacing } from "@/theme";
@@ -64,18 +65,14 @@ export const VideoCard = memo(function VideoCard({
       style={[styles.card, focused && styles.cardFocused]}
     >
       <View style={styles.thumbWrap}>
-        {video.thumbnailUrl ? (
-          <Image
-            source={{ uri: video.thumbnailUrl }}
-            style={styles.thumb}
-            resizeMode="cover"
-            // Decode at view size: Android otherwise keeps the full upstream
-            // bitmap (up to 1280x720) per card, which churns memory and GC.
-            resizeMethod="resize"
-          />
-        ) : (
-          <View style={[styles.thumb, styles.thumbPlaceholder]} />
-        )}
+        <Image
+          source={{ uri: videoThumbnailUrl(video) }}
+          style={styles.thumb}
+          resizeMode="cover"
+          // Decode at view size: Android otherwise keeps the full upstream
+          // bitmap (up to 1280x720) per card, which churns memory and GC.
+          resizeMethod="resize"
+        />
         {focused ? (
           <View style={styles.playOverlay} pointerEvents="none">
             <View style={styles.playBubble}>
@@ -197,7 +194,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.muted,
   },
   thumb: { width: "100%", height: "100%" },
-  thumbPlaceholder: { backgroundColor: colors.muted },
   // Sits on the thumbnail's bottom edge, like the web app's watched bar.
   progressTrack: {
     position: "absolute",

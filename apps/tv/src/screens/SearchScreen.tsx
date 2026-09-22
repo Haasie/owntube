@@ -142,7 +142,9 @@ export function SearchScreen({
       <View style={styles.results}>
         <CarouselFeed
           feed={feed}
-          onSelect={(videoId) => nav.openVideo(videoId)}
+          onSelect={(videoId, videos) =>
+            nav.openVideo(videoId, { context: { source: "feed", videos } })
+          }
           emptyText={
             voiceError ??
             (query ? "No results." : "Press Speak, or type and press Search.")
