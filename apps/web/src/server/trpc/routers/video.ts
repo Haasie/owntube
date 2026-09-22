@@ -12,6 +12,10 @@ import {
   videoCommentsInputSchema,
   videoDetailInputSchema,
 } from "@/server/services/proxy.types";
+import {
+  getUserSettings,
+  withoutBlockedChannels,
+} from "@/server/settings/profile";
 import { publicProcedure, router } from "@/server/trpc/init";
 
 const videoCommentsQuerySchema = videoCommentsInputSchema.extend({
@@ -47,7 +51,15 @@ export const videoRouter = router({
   related: publicProcedure
     .input(videoDetailInputSchema)
     .query(async ({ ctx, input }) => {
-      return fetchRelatedVideos(ctx.db, input, 20);
+      const result = await fetchRelatedVideos(ctx.db, input, 20);
+      if (!ctx.userId) return result;
+      return {
+        ...result,
+        videos: withoutBlockedChannels(
+          result.videos,
+          getUserSettings(ctx.db, ctx.userId),
+        ),
+      };
     }),
   comments: publicProcedure
     .input(videoCommentsQuerySchema)
