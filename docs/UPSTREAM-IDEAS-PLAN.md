@@ -38,9 +38,9 @@ on `upstream/main` (`git show upstream/main:apps/tv/src/…`).
 | Keep visited screens mounted (focus + scroll survive Back; player stays mounted under a channel page, paused via an `active` prop) | `components/Shell.tsx` (`ScreenLayer`, `TVFocusGuideView`) | 3 | **done** — `Shell.tsx` layers + `lib/screen-active.tsx`; Shorts and Settings still mount only while shown |
 | Recent searches + suggestion chips | `lib/recent-searches.ts`, `screens/SearchScreen.tsx` | 3 | **done** (phase 3, `61a2d66`) |
 | Server URL set on the device, no rebuild | `lib/config.ts` (placeholder origin rewritten in a `fetch` wrapper, URL in SecureStore) | 4 | **done** (phase 4, `9c9dadf`) |
-| Hero thumbnail fallback maxres → hq720 → hq on `onError` | `lib/hero-thumbnail-url.ts`, `components/HomeHero.tsx` | 3 | not started — ~40 lines |
-| Retry button on every error state | `lib/use-infinite-feed.ts`, screens | 3 | not started — react-query already exposes `refetch` |
-| Dim watched cards | `components/VideoCard.tsx` | 3 | not started — we already draw the progress bar |
+| Hero thumbnail fallback maxres → hq720 → hq on `onError` | `lib/hero-thumbnail-url.ts`, `components/HomeHero.tsx` | 3 | **done** — `heroThumbnailUrls` in `lib/format.ts` |
+| Retry button on every error state | `lib/use-infinite-feed.ts`, screens | 3 | **done** — `InfiniteFeed.retry` + Retry on `CarouselFeed`'s error state |
+| Dim watched cards | `components/VideoCard.tsx` | 3 | **done** — finished cards' thumbnails at 45% until focused |
 | Channel Videos / Shorts tabs + Subscribe | `screens/ChannelScreen.tsx` | 3 | covered by our phase 3 channel tabs |
 | Library: Saved + Liked + playlists on one screen | `screens/LibraryScreen.tsx` | 3 | Saved **done** (phase 3); Liked still needs `interactions.list` (see web below) |
 | Shorts pager (D-pad up/down, `markSeen`, prefetch next) | `screens/ShortsScreen.tsx` | 6 | **done** (phase 6, `bd11f86`: DASH pager + `markSeen`) |
@@ -76,6 +76,4 @@ the accidentally committed `logs/recommendation-debug.ndjson`.
   filters cached rows against the current exclusions on every read, rather
   than invalidating (which would make most loads block on a recompute again,
   since likes and watches clear the pools constantly).
-- **`subscriptions.mergedFeedInfinite` output type.** The empty branch returns
-  `UnifiedVideo[]` without `watched`, so the output type is a union (~L1159).
-  Upstream fixed the equivalent; harmless today.
+- **`subscriptions.mergedFeedInfinite` output type** — done (`dd4e356`).

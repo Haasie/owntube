@@ -136,6 +136,25 @@ export function videoThumbnailUrl(video: {
 }
 
 /**
+ * Stills for the full-width hero, sharpest first. The row's own thumbnail is
+ * card-sized (blurry at 1080p), so try YouTube's larger stills by id, then
+ * fall back to it: `maxresdefault` only exists for HD uploads and `hq720`
+ * isn't universal either — both answer 404 when missing.
+ */
+export function heroThumbnailUrls(video: {
+  videoId: string;
+  thumbnailUrl?: string;
+}): string[] {
+  const id = encodeURIComponent(video.videoId);
+  const urls = [
+    `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
+    `https://i.ytimg.com/vi/${id}/hq720.jpg`,
+    videoThumbnailUrl(video),
+  ];
+  return urls.filter((url, index) => urls.indexOf(url) === index);
+}
+
+/**
  * Upstream comment text arrives as HTML (links for timestamps, entities).
  * The TV shows it as plain text: line breaks kept, tags dropped, entities
  * decoded.

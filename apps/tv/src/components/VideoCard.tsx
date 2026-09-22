@@ -71,7 +71,12 @@ export const VideoCard = memo(function VideoCard({
       <View style={styles.thumbWrap}>
         <Image
           source={{ uri: videoThumbnailUrl(video) }}
-          style={styles.thumb}
+          // Finished videos recede, like the web's watched cards; focus
+          // brings one back to full strength.
+          style={[
+            styles.thumb,
+            watched?.completed && !focused && styles.thumbWatched,
+          ]}
           resizeMode="cover"
           // Decode at view size: Android otherwise keeps the full upstream
           // bitmap (up to 1280x720) per card, which churns memory and GC.
@@ -198,6 +203,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.muted,
   },
   thumb: { width: "100%", height: "100%" },
+  thumbWatched: { opacity: 0.45 },
   // Sits on the thumbnail's bottom edge, like the web app's watched bar.
   progressTrack: {
     position: "absolute",

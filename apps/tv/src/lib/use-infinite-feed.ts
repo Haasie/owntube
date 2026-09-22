@@ -14,6 +14,9 @@ export type InfiniteFeed = {
   loadingMore: boolean;
   hasMore: boolean;
   loadMore: () => void;
+  /** Refetches after an error (the error screen's Retry). */
+  retry: () => void;
+  retrying: boolean;
 };
 
 /**
@@ -83,5 +86,9 @@ export function useInfiniteFeed<C>(
         void query.fetchNextPage();
       }
     },
+    retry: () => {
+      if (!query.isFetching) void query.refetch();
+    },
+    retrying: query.isError && query.isFetching,
   };
 }

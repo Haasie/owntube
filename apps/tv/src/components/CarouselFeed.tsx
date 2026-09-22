@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import type { CardMenuExtras } from "@/components/CardMenu";
+import { FocusButton } from "@/components/FocusButton";
 import { VideoRow } from "@/components/VideoRow";
 import type { InfiniteFeed } from "@/lib/use-infinite-feed";
 import { colors, fontSize, spacing } from "@/theme";
@@ -106,6 +107,12 @@ export function CarouselFeed({
         {header}
         <Text style={styles.errorTitle}>Something went wrong</Text>
         <Text style={styles.muted}>{feed.message}</Text>
+        <FocusButton
+          label="Retry"
+          variant="primary"
+          loading={feed.retrying}
+          onPress={feed.retry}
+        />
       </View>
     );
   }
