@@ -131,9 +131,16 @@ export function Shell({ onSignOut }: { onSignOut: () => void }) {
    * from a section via Home rather than straight out means Back is never one
    * press away from quitting except at the top level.
    */
+  //
+  // Registered once, reading state through refs: re-registering on every stack
+  // change made this the newest handler — after the watch screen's own, which
+  // registers as it mounts — so Back skipped the player's dismiss-controls step.
+  const backStateRef = useRef({ depth: stack.length, section, pop });
+  backStateRef.current = { depth: stack.length, section, pop };
   useEffect(() => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (stack.length > 0) {
+      const { depth, section, pop } = backStateRef.current;
+      if (depth > 0) {
         pop();
         return true;
       }
@@ -145,7 +152,7 @@ export function Shell({ onSignOut }: { onSignOut: () => void }) {
       return true;
     });
     return () => sub.remove();
-  }, [stack.length, pop, section]);
+  }, []);
 
   if (top?.name === "watch") {
     return (
