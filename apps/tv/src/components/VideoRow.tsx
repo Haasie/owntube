@@ -18,8 +18,11 @@ type Props = {
   onSelect: (videoId: string) => void;
   /** Focus the first card of this row when the content area first gains focus. */
   preferFirstFocus?: boolean;
-  /** Bubbles card focus so a parent can bring the row fully into view. */
-  onCardFocusChange?: (focused: boolean) => void;
+  /**
+   * Bubbles card focus (with the card's video) so a parent can bring the row
+   * into view, or show the video's details.
+   */
+  onCardFocusChange?: (focused: boolean, video?: UnifiedVideo) => void;
   /** Screen-specific context-menu actions for a card. */
   menuExtras?: CardMenuExtras;
   /** Cards that aren't videos (playlists) have no video context menu. */
@@ -73,12 +76,13 @@ export const VideoRow = memo(function VideoRow({
    */
   const handleFocusChange = useCallback(
     (focused: boolean, index: number) => {
-      const { videos, disableMenu } = menuRef.current;
+      const { videos, disableMenu, cardMenu } = menuRef.current;
       const video = videos[index];
       if (focused && video && !disableMenu) {
         const action = () => handleLongPress(video);
         longPressRef.current = action;
         setLongPressTarget(action);
+        cardMenu.hintLongPress();
       } else if (!focused && longPressRef.current) {
         setLongPressTarget(null, longPressRef.current);
         longPressRef.current = null;
@@ -95,7 +99,7 @@ export const VideoRow = memo(function VideoRow({
           viewPosition: 0.5,
         });
       }
-      onCardFocusChangeRef.current?.(focused);
+      onCardFocusChangeRef.current?.(focused, video);
     },
     [handleLongPress],
   );
