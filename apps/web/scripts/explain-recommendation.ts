@@ -20,6 +20,7 @@ import {
 } from "../src/server/recommendation/collect-related-candidates";
 import { collectTaggedVideoCandidates } from "../src/server/recommendation/collect-tagged-candidates";
 import { dailyExploreSeed } from "../src/server/recommendation/deterministic-jitter";
+import { relatedHistorySeeds } from "../src/server/recommendation/engine";
 import { deriveRecommendationReason } from "../src/server/recommendation/reason";
 import {
   isUnvettedKeywordSpam,
@@ -97,7 +98,7 @@ async function main() {
         !watchedEver.has(v.videoId) &&
         !(v.channelId && blocked.has(v.channelId)),
     ),
-    { nowSec, maxPerChannel: 1 },
+    { nowSec, maxPerChannel: 3 },
   );
 
   // 2. Build the exact taste / dislike models the engine uses.
@@ -182,6 +183,7 @@ async function main() {
       coldStart,
       limits: HOME_RELATED_LIMITS,
       excludeVideoIds: watchedEver,
+      historySeedVideoIds: relatedHistorySeeds(signals),
       signals,
       tasteModel,
       dislikeModel,

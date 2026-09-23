@@ -14,18 +14,35 @@ import type { ScoredVideo } from "@/server/recommendation/types";
 import { fetchRelatedVideos } from "@/server/services/proxy";
 import type { UnifiedVideo } from "@/server/services/proxy.types";
 
-export type RelatedSeed = { videoId: string; rawScore: number };
+export type RelatedSeed = {
+  videoId: string;
+  rawScore: number;
+  /**
+   * The seed is something the user watched (or liked), not a pool member: it
+   * is legitimately in the watched/excluded set and must still be expanded.
+   */
+  fromHistory?: boolean;
+};
 
 export type RelatedCollectionLimits = {
   maxSeeds: number;
   limitPerSeed: number;
   maxRelatedTotal: number;
+  /**
+   * Of `maxSeeds`, how many come from the user's own recent engaged watches
+   * and likes (the rest are the pool's top-scored rows). Seeding from what was
+   * actually watched grows the feed out of the user's real viewing — the
+   * pool's own head is mostly keyword hits, so seeding only from it just
+   * fetched "more of the same keyword". 0 / unset = pool seeds only.
+   */
+  maxHistorySeeds?: number;
 };
 
 export const HOME_RELATED_LIMITS: RelatedCollectionLimits = {
-  maxSeeds: 6,
-  limitPerSeed: 10,
-  maxRelatedTotal: 48,
+  maxSeeds: 10,
+  maxHistorySeeds: 6,
+  limitPerSeed: 12,
+  maxRelatedTotal: 80,
 };
 
 /**
@@ -33,12 +50,16 @@ export const HOME_RELATED_LIMITS: RelatedCollectionLimits = {
  * tail dropped, the pool leans harder on related videos to stay long, so more
  * seeds and a larger related cap replace that filler with actual discovery.
  * Costs more upstream related fetches per build (amortized by the 10-min pool
- * cache), so it is only used when the user opts into `personalizedFeedOnly`.
+ * cache; watched seeds are usually already cached by the watch page), so it is
+ * only used when the user opts into `personalizedFeedOnly`.
  */
 export const HOME_RELATED_LIMITS_DEEP: RelatedCollectionLimits = {
-  maxSeeds: 12,
-  limitPerSeed: 12,
-  maxRelatedTotal: 120,
+  maxSeeds: 16,
+  maxHistorySeeds: 10,
+  // Deeper per seed: the one-year age cap discards roughly half of a related
+  // list, and the fetch returns the same upstream page either way.
+  limitPerSeed: 20,
+  maxRelatedTotal: 160,
 };
 
 export const SHORTS_RELATED_LIMITS: RelatedCollectionLimits = {
@@ -77,7 +98,11 @@ export async function collectRelatedVideoCandidates(
   } = opts;
 
   const pickedSeeds = seeds
-    .filter((s) => s.videoId.length > 0 && !excludeVideoIds.has(s.videoId))
+    .filter(
+      (s) =>
+        s.videoId.length > 0 &&
+        (s.fromHistory || !excludeVideoIds.has(s.videoId)),
+    )
     .slice(0, maxSeeds);
 
   const seen = new Set<string>(excludeFromPool);
@@ -134,7 +159,42 @@ export type ExpandScoredPoolWithRelatedOpts = {
   scoreContext: RecommendationScoreContext;
   minScoredForExpansion?: number;
   filterVideo?: (video: UnifiedVideo) => boolean;
+  /**
+   * Videos the user recently engaged with (most relevant first) to seed
+   * related expansion alongside the pool's head; capped by
+   * `limits.maxHistorySeeds`. Ignored when that cap is 0 / unset.
+   */
+  historySeedVideoIds?: readonly string[];
 };
+
+/**
+ * Seeds for one expansion: up to `maxHistorySeeds` of the user's own watches
+ * first (they carry the full seed boost — nothing is a stronger signal than
+ * what was actually watched), then the pool's top-scored rows fill the rest.
+ */
+export function pickRelatedSeeds(
+  scored: readonly Pick<ScoredVideo, "videoId" | "rawScore">[],
+  historySeedVideoIds: readonly string[],
+  limits: Pick<RelatedCollectionLimits, "maxSeeds" | "maxHistorySeeds">,
+): RelatedSeed[] {
+  const topPoolScore = Math.max(...scored.map((s) => s.rawScore), 1e-9);
+  const seeds: RelatedSeed[] = [];
+  const seen = new Set<string>();
+  const historyCap = Math.min(limits.maxSeeds, limits.maxHistorySeeds ?? 0);
+  for (const videoId of historySeedVideoIds) {
+    if (seeds.length >= historyCap) break;
+    if (!videoId || seen.has(videoId)) continue;
+    seen.add(videoId);
+    seeds.push({ videoId, rawScore: topPoolScore, fromHistory: true });
+  }
+  for (const s of scored) {
+    if (seeds.length >= limits.maxSeeds) break;
+    if (seen.has(s.videoId)) continue;
+    seen.add(s.videoId);
+    seeds.push({ videoId: s.videoId, rawScore: s.rawScore });
+  }
+  return seeds;
+}
 
 /**
  * Second pass: expand the scored pool with related videos from top seeds, re-score newcomers,
@@ -156,6 +216,7 @@ export async function expandScoredPoolWithRelatedCandidates(
     scoreContext,
     minScoredForExpansion = 8,
     filterVideo,
+    historySeedVideoIds = [],
   } = opts;
 
   if (coldStart || scored.length < minScoredForExpansion) {
@@ -163,9 +224,7 @@ export async function expandScoredPoolWithRelatedCandidates(
   }
 
   const poolIds = new Set(scored.map((s) => s.videoId));
-  const seeds: RelatedSeed[] = scored
-    .slice(0, limits.maxSeeds)
-    .map((s) => ({ videoId: s.videoId, rawScore: s.rawScore }));
+  const seeds = pickRelatedSeeds(scored, historySeedVideoIds, limits);
 
   const maxSeedScore = Math.max(...seeds.map((s) => s.rawScore), 1e-9);
   const seedScoreById = new Map(seeds.map((s) => [s.videoId, s.rawScore]));

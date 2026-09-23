@@ -28,6 +28,7 @@ import {
 } from "@/server/recommendation/pool-invalidation";
 import { deriveRecommendationReason } from "@/server/recommendation/reason";
 import {
+  isTooOldForRecommendations,
   isUnvettedKeywordSpam,
   keepCandidateForPersonalizedFeed,
   keywordDiscoveryScorePenalty,
@@ -38,6 +39,7 @@ import { clearShortsRecommendationCacheForUser } from "@/server/recommendation/s
 import {
   collectUserSignals,
   dislikeCorpusVideoIds,
+  type UserSignals,
 } from "@/server/recommendation/signals";
 import { getSubscribedChannelIds } from "@/server/recommendation/subscribed-channels";
 import {
@@ -128,6 +130,28 @@ function sliceRecommendationPool(
     hasMore,
     personalizedPageCount,
   };
+}
+
+/** Most recent likes lead (strongest endorsement), then engaged watches, newest first. */
+const RELATED_HISTORY_LIKE_SEEDS = 4;
+export function relatedHistorySeeds(
+  signals: Pick<UserSignals, "likedVideoIds" | "recentEngagedVideoIds">,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  // `likedVideoIds` preserves insertion order = newest interaction first.
+  for (const id of signals.likedVideoIds) {
+    if (out.length >= RELATED_HISTORY_LIKE_SEEDS) break;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  for (const id of signals.recentEngagedVideoIds) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
 }
 
 function clipTitle(title: string, max = 80): string {
@@ -398,7 +422,12 @@ async function ensureRecommendationPool(
       taggedCandidates,
       nowSec,
     );
-    /** One unwatched “head” per channel so TF-IDF cannot bury a newer upload under an older highlights row. */
+    /**
+     * Three newest unwatched uploads per channel: newest-first so TF-IDF
+     * cannot bury a fresh upload under an older highlights row, and a few
+     * rather than one so a channel the user actually watches can hold a slot
+     * on the first page and more deeper down (MMR keeps them apart).
+     */
     const poolVideoIds = [...byId.keys()];
     const ignoredVideoIds = new Set(
       poolVideoIds.length > 0
@@ -421,9 +450,12 @@ async function ensureRecommendationPool(
         (v) =>
           !excludedVideoIds.has(v.videoId) &&
           !ignoredVideoIds.has(v.videoId) &&
-          !(v.channelId && blockedRecommendationChannels.has(v.channelId)),
+          !(v.channelId && blockedRecommendationChannels.has(v.channelId)) &&
+          // Applied before the per-channel cut so a dormant channel yields
+          // nothing rather than its stale head.
+          !isTooOldForRecommendations(v, nowSec),
       ),
-      { nowSec, maxPerChannel: 1 },
+      { nowSec, maxPerChannel: 3 },
     );
     const unique = enrichVideosWithStoredChannelAvatars(db, uniqueRaw);
     const tasteVideoIds = Array.from(
@@ -539,6 +571,9 @@ async function ensureRecommendationPool(
           ? HOME_RELATED_LIMITS_DEEP
           : HOME_RELATED_LIMITS,
         excludeVideoIds: excludedVideoIds,
+        historySeedVideoIds: relatedHistorySeeds(signals),
+        // Filtered at collection so the related cap counts fresh rows only.
+        filterVideo: (v) => !isTooOldForRecommendations(v, nowSec),
         signals,
         tasteModel,
         dislikeModel,

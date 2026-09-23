@@ -12,24 +12,72 @@ import {
 import type { UnifiedVideo } from "@/server/services/proxy.types";
 
 const MIN_WATCH_ROWS_FOR_HISTORY_POOL = 3;
-const MAX_HISTORY_CHANNEL_FETCHES = 32;
+/**
+ * Raised from 32 so the history side of the pool is not outnumbered by
+ * keyword hits. Channels are taken by interest weight (recency-decayed,
+ * engagement-weighted), not by last-watched order, so a one-off channel
+ * opened yesterday no longer displaces a channel watched all month.
+ */
+const MAX_HISTORY_CHANNEL_FETCHES = 40;
 const VIDEOS_PER_HISTORY_CHANNEL = 12;
 const MIN_UNIQUE_CANDIDATES_HISTORY_ONLY = 14;
 const CHANNEL_FETCH_CONCURRENCY = 6;
 /** When trending supplies a channel we did not page yet, fetch latest uploads so recs prefer newer unwatched videos. */
 const MAX_TRENDING_ONLY_CHANNEL_HEAD_FETCHES = 12;
 /**
- * Cap upstream searches per pool build. Matches the taste-keyword limit so
- * every declared keyword actively pulls candidates. Safe at this size because
- * the 6h search cache absorbs repeats (only the first build after a keyword
- * change pays the full fan-out) and every call still goes through the upstream
- * rate limiter — so this bounds the work, it does not burst it.
+ * Keyword searches per pool build. Every declared keyword used to fire on
+ * every build (up to 96 × 8 results), which let "Refine recommendations" —
+ * meant as a nudge — supply ~85% of the pool and turn the home feed into a
+ * loop over the same few themes. Now a daily-rotating window of keywords
+ * runs per build, so the keyword slice stays a minority next to history- and
+ * related-driven candidates while every keyword still gets its turn within a
+ * few days. Rotation is per day (and per user) so the pool cache, which
+ * lives minutes, never sees the window move mid-day.
  */
-const MAX_KEYWORD_SEARCHES = 96;
-const VIDEOS_PER_KEYWORD = 8;
+export const KEYWORDS_PER_BUILD = 12;
+const VIDEOS_PER_KEYWORD = 6;
 const KEYWORD_SEARCH_CONCURRENCY = 3;
+/**
+ * Relevance-sorted search returns evergreen uploads (half the cached keyword
+ * results were older than a year); restricting to the past year keeps the
+ * keyword slice current while still deep enough to have real matches.
+ */
+const KEYWORD_SEARCH_DATE_WINDOW = "year" as const;
 
 export type TaggedVideoCandidate = { video: UnifiedVideo; source: string };
+
+/**
+ * The keywords that run this build: a contiguous, wrapping window over the
+ * user's (de-duplicated) keyword list that advances by `perBuild` each day, so
+ * consecutive days cover disjoint slices until the list wraps. Lists that fit
+ * in one window are returned whole.
+ */
+export function selectKeywordsForBuild(
+  tasteKeywords: readonly string[],
+  userId: number,
+  nowSec: number,
+  perBuild = KEYWORDS_PER_BUILD,
+): string[] {
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const kw of tasteKeywords) {
+    const k = kw.trim();
+    const low = k.toLowerCase();
+    if (!k || seen.has(low)) continue;
+    seen.add(low);
+    cleaned.push(k);
+  }
+  if (cleaned.length <= perBuild) return cleaned;
+  const day = Math.floor(nowSec / 86_400);
+  const start =
+    (((day * perBuild + userId) % cleaned.length) + cleaned.length) %
+    cleaned.length;
+  const out: string[] = [];
+  for (let i = 0; i < perBuild; i += 1) {
+    out.push(cleaned[(start + i) % cleaned.length] as string);
+  }
+  return out;
+}
 
 function withChannelAvatarFallback(
   video: UnifiedVideo,
@@ -74,10 +122,10 @@ export async function collectTaggedVideoCandidates(
 
   const canBuildFromHistory =
     signals.totalWatches >= MIN_WATCH_ROWS_FOR_HISTORY_POOL &&
-    signals.channelsOrderedByRecentWatch.length > 0;
+    signals.channelsOrderedByWeight.length > 0;
 
   if (canBuildFromHistory) {
-    const historyChannels = signals.channelsOrderedByRecentWatch.slice(
+    const historyChannels = signals.channelsOrderedByWeight.slice(
       0,
       MAX_HISTORY_CHANNEL_FETCHES,
     );
@@ -261,10 +309,7 @@ export async function collectTaggedVideoCandidates(
   // "Refine recommendations" keywords seed upstream searches so the pool can
   // surface topics the user is interested in but has not watched yet — the
   // taste model only re-ranks the candidate pool, it cannot conjure candidates.
-  const keywords = tasteKeywords
-    .map((kw) => kw.trim())
-    .filter((kw) => kw.length > 0)
-    .slice(0, MAX_KEYWORD_SEARCHES);
+  const keywords = selectKeywordsForBuild(tasteKeywords, userId, nowSec);
   for (let i = 0; i < keywords.length; i += KEYWORD_SEARCH_CONCURRENCY) {
     const batch = keywords.slice(i, i + KEYWORD_SEARCH_CONCURRENCY);
     const settled = await Promise.allSettled(
@@ -273,6 +318,7 @@ export async function collectTaggedVideoCandidates(
           q: keyword,
           limit: VIDEOS_PER_KEYWORD,
           region,
+          date: KEYWORD_SEARCH_DATE_WINDOW,
         });
         return { keyword, videos: result.videos };
       }),

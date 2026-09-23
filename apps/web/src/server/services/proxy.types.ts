@@ -31,6 +31,8 @@ export const searchVideosInputSchema = z.object({
   continuation: z.string().max(4096).optional(),
   /** ISO 3166-1 alpha-2, passed through to Invidious search. */
   region: z.string().length(2).optional(),
+  /** Upload-date window (Invidious `date` filter); unset = any time. */
+  date: z.enum(["hour", "today", "week", "month", "year"]).optional(),
 });
 
 export type SearchVideosInput = z.infer<typeof searchVideosInputSchema>;
