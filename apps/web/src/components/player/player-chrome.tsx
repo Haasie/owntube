@@ -176,6 +176,8 @@ export function PlayerChrome({
     if (fsActive && cinemaMode) onExitCinema();
   }, [fsActive, cinemaMode, onExitCinema]);
 
+  // Pointer type of the press that produced the next surface click.
+  const surfacePointerTypeRef = useRef<string>("mouse");
   const onSurfaceClick = (e: ReactMouseEvent) => {
     if (suppressNextClickRef.current) {
       suppressNextClickRef.current = false;
@@ -186,6 +188,13 @@ export function PlayerChrome({
     if ((e.target as HTMLElement).closest("[data-controls]")) return;
     if (settingsOpen) {
       onSettingsOpenChange(false);
+      return;
+    }
+    // Touch: a tap on the video only brings the controls up (play/pause is
+    // the center button). Toggling here paused the video on every tap meant
+    // to reveal the controls — including taps on the hidden scrubber.
+    if (surfacePointerTypeRef.current === "touch" && !shortsMode) {
+      ping();
       return;
     }
     adapter.togglePaused();
@@ -238,7 +247,10 @@ export function PlayerChrome({
         data-tap-surface
         aria-label={adapter.paused ? "Play" : "Pause"}
         onClick={onSurfaceClick}
-        onPointerDown={onSurfacePointerDown}
+        onPointerDown={(e) => {
+          surfacePointerTypeRef.current = e.pointerType;
+          onSurfacePointerDown(e);
+        }}
         onPointerUp={onSurfacePointerUp}
         onPointerCancel={onSurfacePointerUp}
         onPointerLeave={onSurfacePointerLeave}

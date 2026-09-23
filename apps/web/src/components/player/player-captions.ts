@@ -56,6 +56,34 @@ const MIRROR_LABEL = "\u200bowntube-native-mirror";
 /** Far enough out that the single mirror cue stays active for any playback. */
 const MIRROR_CUE_END = 2 ** 31;
 
+/**
+ * Whether `video` is on a native surface that draws `showing` cues itself:
+ * Picture-in-Picture or Apple's fullscreen player. iPadOS/iOS Safari has no
+ * standard PiP API — its PiP (the native control, or auto-PiP when leaving
+ * Safari) only shows up as `webkitPresentationMode`.
+ */
+function isInNativePresentation(video: HTMLVideoElement): boolean {
+  const v = video as HTMLVideoElement & {
+    webkitDisplayingFullscreen?: boolean;
+    webkitPresentationMode?: string;
+  };
+  return (
+    document.pictureInPictureElement === video ||
+    v.webkitPresentationMode === "picture-in-picture" ||
+    v.webkitPresentationMode === "fullscreen" ||
+    v.webkitDisplayingFullscreen === true
+  );
+}
+
+/** Events that flip {@link isInNativePresentation}. */
+const NATIVE_PRESENTATION_EVENTS = [
+  "enterpictureinpicture",
+  "leavepictureinpicture",
+  "webkitbeginfullscreen",
+  "webkitendfullscreen",
+  "webkitpresentationmodechanged",
+] as const;
+
 type MirrorTrack = {
   video: HTMLVideoElement;
   track: TextTrack;
@@ -163,26 +191,15 @@ export function usePlayerCaptions(
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const sync = () => {
-      setNativePresentation(
-        document.pictureInPictureElement === video ||
-          (
-            video as HTMLVideoElement & {
-              webkitDisplayingFullscreen?: boolean;
-            }
-          ).webkitDisplayingFullscreen === true,
-      );
-    };
+    const sync = () => setNativePresentation(isInNativePresentation(video));
     sync();
-    video.addEventListener("enterpictureinpicture", sync);
-    video.addEventListener("leavepictureinpicture", sync);
-    video.addEventListener("webkitbeginfullscreen", sync);
-    video.addEventListener("webkitendfullscreen", sync);
+    for (const ev of NATIVE_PRESENTATION_EVENTS) {
+      video.addEventListener(ev, sync);
+    }
     return () => {
-      video.removeEventListener("enterpictureinpicture", sync);
-      video.removeEventListener("leavepictureinpicture", sync);
-      video.removeEventListener("webkitbeginfullscreen", sync);
-      video.removeEventListener("webkitendfullscreen", sync);
+      for (const ev of NATIVE_PRESENTATION_EVENTS) {
+        video.removeEventListener(ev, sync);
+      }
     };
   }, [videoRef, reactKey]);
 
@@ -221,10 +238,7 @@ export function usePlayerCaptions(
       // track — one plain cue holding our resolved text — is set `showing`.
       // Inline (and in our element-fullscreen, where the overlay is on-screen)
       // the mirror stays `hidden` and we render the styled text ourselves.
-      const inNativePresentation =
-        document.pictureInPictureElement === video ||
-        (video as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean })
-          .webkitDisplayingFullscreen === true;
+      const inNativePresentation = isInNativePresentation(video);
       const mirror = wantLabel !== null ? ensureMirror(mirrorRef, video) : null;
       // Without a mirror (no VTTCue support) fall back to showing the raw track
       // natively — imperfect, but better than no captions in PiP.
@@ -260,18 +274,16 @@ export function usePlayerCaptions(
     video.addEventListener("loadedmetadata", apply);
     // Re-apply when entering/leaving a native surface so cues switch between our
     // overlay (`hidden`) and native rendering (`showing`).
-    video.addEventListener("enterpictureinpicture", apply);
-    video.addEventListener("leavepictureinpicture", apply);
-    video.addEventListener("webkitbeginfullscreen", apply);
-    video.addEventListener("webkitendfullscreen", apply);
+    for (const ev of NATIVE_PRESENTATION_EVENTS) {
+      video.addEventListener(ev, apply);
+    }
     video.textTracks.addEventListener?.("addtrack", apply);
     video.textTracks.addEventListener?.("change", apply);
     return () => {
       video.removeEventListener("loadedmetadata", apply);
-      video.removeEventListener("enterpictureinpicture", apply);
-      video.removeEventListener("leavepictureinpicture", apply);
-      video.removeEventListener("webkitbeginfullscreen", apply);
-      video.removeEventListener("webkitendfullscreen", apply);
+      for (const ev of NATIVE_PRESENTATION_EVENTS) {
+        video.removeEventListener(ev, apply);
+      }
       video.textTracks.removeEventListener?.("addtrack", apply);
       video.textTracks.removeEventListener?.("change", apply);
     };
