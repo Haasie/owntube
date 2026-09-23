@@ -18,12 +18,15 @@ export async function GET(
   context: { params: Promise<{ rest?: string[] }> },
 ) {
   const { rest } = await context.params;
-  return withMediaCors(
-    await handleUpstreamMediaRequest(request, {
-      segments: rest,
-      prefix: STREAM_PROXY_PREFIX,
-    }),
-  );
+  const path = rest?.join("/") ?? "";
+  const range = request.headers.get("range");
+  console.log(`[STREAM] GET /stream/${path} range=${range}`);
+  const res = await handleUpstreamMediaRequest(request, {
+    segments: rest,
+    prefix: STREAM_PROXY_PREFIX,
+  });
+  console.log(`[STREAM] RESP /stream/${path} status=${res.status}`);
+  return withMediaCors(res);
 }
 
 export function OPTIONS(): Response {

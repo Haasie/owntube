@@ -1,13 +1,13 @@
-const STATIC_CACHE = "owntube-static-v9";
-const PAGE_CACHE = "owntube-pages-v9";
-const IMAGE_CACHE = "owntube-images-v9";
+const STATIC_CACHE = "owntube-static-v10";
+const PAGE_CACHE = "owntube-pages-v10";
+const IMAGE_CACHE = "owntube-images-v10";
 const STATIC_ASSETS = [
   "/",
   "/manifest.webmanifest",
-  "/logo-dark.png?v=9",
-  "/logo-light.png?v=9",
-  "/favicon-dark.ico?v=9",
-  "/favicon-light.ico?v=9",
+  "/logo-dark.png?v=10",
+  "/logo-light.png?v=10",
+  "/favicon-dark.ico?v=10",
+  "/favicon-light.ico?v=10",
 ];
 
 self.addEventListener("install", (event) => {
