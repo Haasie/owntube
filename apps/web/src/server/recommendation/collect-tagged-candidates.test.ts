@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   KEYWORDS_PER_BUILD,
+  SUBSCRIPTIONS_PER_BUILD,
   selectKeywordsForBuild,
+  selectSubscriptionsForBuild,
 } from "@/server/recommendation/collect-tagged-candidates";
 
 const DAY = 86_400;
@@ -49,5 +51,31 @@ describe("selectKeywordsForBuild", () => {
     const picked = selectKeywordsForBuild(all, 0, 1 * DAY, 12);
     expect(picked).toHaveLength(12);
     expect(new Set(picked).size).toBe(12);
+  });
+});
+
+describe("selectSubscriptionsForBuild", () => {
+  const subs = (n: number) => Array.from({ length: n }, (_, i) => `UC${i}`);
+
+  it("returns every subscription when they fit in one build", () => {
+    expect(selectSubscriptionsForBuild(["UCb", "UCa", "UCb"], 1, 0)).toEqual([
+      "UCa",
+      "UCb",
+    ]);
+  });
+
+  it("covers all subscriptions within a few days, regardless of order", () => {
+    const all = subs(161);
+    const covered = new Set<string>();
+    const days = Math.ceil(161 / SUBSCRIPTIONS_PER_BUILD);
+    for (let d = 0; d < days; d += 1) {
+      const picked = selectSubscriptionsForBuild(all, 1, (200 + d) * DAY);
+      expect(picked).toHaveLength(SUBSCRIPTIONS_PER_BUILD);
+      for (const id of picked) covered.add(id);
+    }
+    expect(covered.size).toBe(161);
+    expect(
+      selectSubscriptionsForBuild([...all].reverse(), 1, 200 * DAY),
+    ).toEqual(selectSubscriptionsForBuild(all, 1, 200 * DAY));
   });
 });

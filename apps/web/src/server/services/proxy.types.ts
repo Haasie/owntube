@@ -43,7 +43,10 @@ export type SearchVideosInput = z.infer<typeof searchVideosInputSchema>;
  */
 export const recommendationReasonSchema = z.object({
   kind: z.enum(["subscription", "channel", "topic", "related", "trending"]),
-  /** Channel the affinity comes from (for `kind: "subscription" | "channel"`). */
+  /**
+   * Channel the affinity comes from (for `kind: "subscription" | "channel"`),
+   * or, for `kind: "related"`, the subscribed channel whose upload seeded it.
+   */
   channelName: z.string().optional(),
   /** Top matched taste terms (for `kind: "topic"`). */
   terms: z.array(z.string()).optional(),

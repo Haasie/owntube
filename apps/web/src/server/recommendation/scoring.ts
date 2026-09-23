@@ -21,7 +21,14 @@ const W_POP = 0.08;
 const W_FRESH = 0.2;
 const W_SHARE = 0.12;
 const W_CATALOG = 0.14;
-const W_RECENT_CH = 0.14;
+/**
+ * Lowered from 0.14: "watched this channel in the last few days" used to be
+ * one of the largest terms, so the feed followed whatever was opened lately.
+ * Subscriptions (`W_SUBSCRIPTION`) now carry the channel-level lift instead.
+ */
+const W_RECENT_CH = 0.04;
+/** Candidate is from a subscribed channel (only when those may be shown). */
+const W_SUBSCRIPTION = 0.16;
 /** Subtracted when a candidate title resembles the user's disliked titles. */
 const W_DISLIKE = 0.2;
 const FORMAT_BIAS_SHORT = -0.055;
@@ -53,6 +60,11 @@ export type RecommendationScoreContext = {
    * (tests and contexts where reproducible scores matter).
    */
   exploreSeed?: string;
+  /**
+   * Subscribed channels whose uploads get the subscription lift. Absent when
+   * subscribed uploads are stripped from the feed (discovery mode) or unknown.
+   */
+  subscribedChannelIds?: ReadonlySet<string>;
 };
 
 /** Maps an age in hours to the freshness score buckets (shared by both inputs). */
@@ -418,6 +430,7 @@ export type RecommendationScoreBreakdown = {
     shareFromChannel: number;
     catalogCoverage: number;
     recentChannelBoost: number;
+    subscription: number;
   };
   inputs: {
     /** Raw TF-IDF cosine before the title gain is applied. */
@@ -435,6 +448,7 @@ export type RecommendationScoreBreakdown = {
     /** Damping applied to catalog coverage (distinct watches / saturation, capped at 1). */
     catalogCoverageDamping: number;
     recentChannelBoostRaw: number;
+    isSubscribed: boolean;
   };
 };
 
@@ -525,6 +539,10 @@ export function scoreCandidateDetail(
   );
   const wCatalog = W_CATALOG * Math.min(1, catalogCoverage) * catalogDamping;
   const wRecentCh = W_RECENT_CH * recentChannelBoostRaw;
+  const isSubscribed = Boolean(
+    video.channelId && ctx.subscribedChannelIds?.has(video.channelId),
+  );
+  const wSubscription = isSubscribed ? W_SUBSCRIPTION : 0;
   const score =
     wTitle +
     wChannel +
@@ -536,7 +554,8 @@ export function scoreCandidateDetail(
     explore +
     wShare +
     wCatalog +
-    wRecentCh;
+    wRecentCh +
+    wSubscription;
   return {
     score,
     breakdown: {
@@ -552,6 +571,7 @@ export function scoreCandidateDetail(
         shareFromChannel: wShare,
         catalogCoverage: wCatalog,
         recentChannelBoost: wRecentCh,
+        subscription: wSubscription,
       },
       inputs: {
         titleSimilarity: tagRaw,
@@ -567,6 +587,7 @@ export function scoreCandidateDetail(
         recentPageCoverageOnChannel: catalogCoverage,
         catalogCoverageDamping: catalogDamping,
         recentChannelBoostRaw,
+        isSubscribed,
       },
     },
   };

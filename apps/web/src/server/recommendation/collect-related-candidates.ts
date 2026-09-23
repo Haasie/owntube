@@ -22,7 +22,16 @@ export type RelatedSeed = {
    * is legitimately in the watched/excluded set and must still be expanded.
    */
   fromHistory?: boolean;
+  /**
+   * The seed is a recent upload from a subscribed channel (named here). Like a
+   * history seed it may sit in the excluded set, and its related rows carry a
+   * stronger boost: the feed is centred on what the user subscribes to.
+   */
+  subscriptionChannelName?: string;
+  fromSubscription?: boolean;
 };
+
+export type SubscriptionSeed = { videoId: string; channelName?: string };
 
 export type RelatedCollectionLimits = {
   maxSeeds: number;
@@ -36,11 +45,18 @@ export type RelatedCollectionLimits = {
    * fetched "more of the same keyword". 0 / unset = pool seeds only.
    */
   maxHistorySeeds?: number;
+  /**
+   * Of `maxSeeds`, how many come from recent uploads of subscribed channels
+   * (one per channel). Taken before history seeds so subscriptions, not the
+   * last few watches, decide where the feed grows. 0 / unset = none.
+   */
+  maxSubscriptionSeeds?: number;
 };
 
 export const HOME_RELATED_LIMITS: RelatedCollectionLimits = {
-  maxSeeds: 10,
-  maxHistorySeeds: 6,
+  maxSeeds: 12,
+  maxSubscriptionSeeds: 8,
+  maxHistorySeeds: 3,
   limitPerSeed: 12,
   maxRelatedTotal: 80,
 };
@@ -54,8 +70,9 @@ export const HOME_RELATED_LIMITS: RelatedCollectionLimits = {
  * only used when the user opts into `personalizedFeedOnly`.
  */
 export const HOME_RELATED_LIMITS_DEEP: RelatedCollectionLimits = {
-  maxSeeds: 16,
-  maxHistorySeeds: 10,
+  maxSeeds: 20,
+  maxSubscriptionSeeds: 14,
+  maxHistorySeeds: 4,
   // Deeper per seed: the one-year age cap discards roughly half of a related
   // list, and the fetch returns the same upstream page either way.
   limitPerSeed: 20,
@@ -70,6 +87,10 @@ export const SHORTS_RELATED_LIMITS: RelatedCollectionLimits = {
 
 const DEFAULT_CONCURRENCY = 4;
 const RELATED_SEED_SCORE_BOOST = 0.06;
+/** Extra lift for rows related to a subscribed channel's upload. */
+const SUBSCRIPTION_RELATED_BOOST = 0.1;
+/** Raw title cosine at which a related row earns the full subscription lift. */
+const SUBSCRIPTION_RELATED_TOPIC_FIT = 0.12;
 
 export type CollectRelatedVideoCandidatesOpts = RelatedCollectionLimits & {
   excludeVideoIds?: ReadonlySet<string>;
@@ -101,7 +122,9 @@ export async function collectRelatedVideoCandidates(
     .filter(
       (s) =>
         s.videoId.length > 0 &&
-        (s.fromHistory || !excludeVideoIds.has(s.videoId)),
+        (s.fromHistory ||
+          s.fromSubscription ||
+          !excludeVideoIds.has(s.videoId)),
     )
     .slice(0, maxSeeds);
 
@@ -165,22 +188,50 @@ export type ExpandScoredPoolWithRelatedOpts = {
    * `limits.maxHistorySeeds`. Ignored when that cap is 0 / unset.
    */
   historySeedVideoIds?: readonly string[];
+  /**
+   * Recent uploads of subscribed channels (freshest first, one per channel) to
+   * seed related expansion; capped by `limits.maxSubscriptionSeeds`.
+   */
+  subscriptionSeeds?: readonly SubscriptionSeed[];
 };
 
 /**
- * Seeds for one expansion: up to `maxHistorySeeds` of the user's own watches
- * first (they carry the full seed boost — nothing is a stronger signal than
- * what was actually watched), then the pool's top-scored rows fill the rest.
+ * Seeds for one expansion: up to `maxSubscriptionSeeds` recent uploads of
+ * subscribed channels first, then up to `maxHistorySeeds` of the user's own
+ * likes and watches (both carry the full seed boost), then the pool's
+ * top-scored rows fill the rest.
  */
 export function pickRelatedSeeds(
   scored: readonly Pick<ScoredVideo, "videoId" | "rawScore">[],
   historySeedVideoIds: readonly string[],
-  limits: Pick<RelatedCollectionLimits, "maxSeeds" | "maxHistorySeeds">,
+  limits: Pick<
+    RelatedCollectionLimits,
+    "maxSeeds" | "maxHistorySeeds" | "maxSubscriptionSeeds"
+  >,
+  subscriptionSeeds: readonly SubscriptionSeed[] = [],
 ): RelatedSeed[] {
   const topPoolScore = Math.max(...scored.map((s) => s.rawScore), 1e-9);
   const seeds: RelatedSeed[] = [];
   const seen = new Set<string>();
-  const historyCap = Math.min(limits.maxSeeds, limits.maxHistorySeeds ?? 0);
+  const subscriptionCap = Math.min(
+    limits.maxSeeds,
+    limits.maxSubscriptionSeeds ?? 0,
+  );
+  for (const sub of subscriptionSeeds) {
+    if (seeds.length >= subscriptionCap) break;
+    if (!sub.videoId || seen.has(sub.videoId)) continue;
+    seen.add(sub.videoId);
+    seeds.push({
+      videoId: sub.videoId,
+      rawScore: topPoolScore,
+      fromSubscription: true,
+      subscriptionChannelName: sub.channelName,
+    });
+  }
+  const historyCap = Math.min(
+    limits.maxSeeds,
+    seeds.length + (limits.maxHistorySeeds ?? 0),
+  );
   for (const videoId of historySeedVideoIds) {
     if (seeds.length >= historyCap) break;
     if (!videoId || seen.has(videoId)) continue;
@@ -217,6 +268,7 @@ export async function expandScoredPoolWithRelatedCandidates(
     minScoredForExpansion = 8,
     filterVideo,
     historySeedVideoIds = [],
+    subscriptionSeeds = [],
   } = opts;
 
   if (coldStart || scored.length < minScoredForExpansion) {
@@ -224,10 +276,15 @@ export async function expandScoredPoolWithRelatedCandidates(
   }
 
   const poolIds = new Set(scored.map((s) => s.videoId));
-  const seeds = pickRelatedSeeds(scored, historySeedVideoIds, limits);
+  const seeds = pickRelatedSeeds(
+    scored,
+    historySeedVideoIds,
+    limits,
+    subscriptionSeeds,
+  );
 
   const maxSeedScore = Math.max(...seeds.map((s) => s.rawScore), 1e-9);
-  const seedScoreById = new Map(seeds.map((s) => [s.videoId, s.rawScore]));
+  const seedById = new Map(seeds.map((s) => [s.videoId, s]));
 
   const relatedTagged = await collectRelatedVideoCandidates(db, seeds, {
     ...limits,
@@ -248,7 +305,8 @@ export async function expandScoredPoolWithRelatedCandidates(
     const seedId = source.startsWith("related:")
       ? source.slice("related:".length)
       : "";
-    const seedScore = seedScoreById.get(seedId) ?? 0;
+    const seed = seedById.get(seedId);
+    const seedScore = seed?.rawScore ?? 0;
     const detail = scoreCandidateDetail(
       video,
       signals,
@@ -257,15 +315,38 @@ export async function expandScoredPoolWithRelatedCandidates(
       scoreContext,
       dislikeModel,
     );
-    const boost = RELATED_SEED_SCORE_BOOST * (seedScore / maxSeedScore);
+    // Related lists carry clickbait unrelated to the seed; most of the
+    // subscription lift needs the row's title to match the user's taste.
+    const topicFit = Math.min(
+      1,
+      detail.breakdown.inputs.titleSimilarity / SUBSCRIPTION_RELATED_TOPIC_FIT,
+    );
+    const boost =
+      RELATED_SEED_SCORE_BOOST * (seedScore / maxSeedScore) +
+      (seed?.fromSubscription
+        ? SUBSCRIPTION_RELATED_BOOST * (0.3 + 0.7 * topicFit)
+        : 0);
+    const derived = deriveRecommendationReason(
+      detail.breakdown,
+      video,
+      tasteModel,
+      source,
+    );
+    // Provenance first: "similar to <subscription>" is the honest reason unless
+    // the row's own channel is one the user clearly follows.
+    const recommendationReason =
+      seed?.fromSubscription &&
+      seed.subscriptionChannelName &&
+      derived?.kind !== "channel" &&
+      derived?.kind !== "subscription"
+        ? {
+            kind: "related" as const,
+            channelName: seed.subscriptionChannelName,
+          }
+        : derived;
     newRows.push({
       ...video,
-      recommendationReason: deriveRecommendationReason(
-        detail.breakdown,
-        video,
-        tasteModel,
-        source,
-      ),
+      recommendationReason,
       rawScore: detail.score + boost,
       scoreBreakdown: detail.breakdown,
       candidateSource: source,

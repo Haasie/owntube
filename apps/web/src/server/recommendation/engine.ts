@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import {
   mergeVideosByIdPreferNewer,
   pickNewestVideoPerChannel,
+  publishedSortKey,
 } from "@/lib/published-sort-key";
 import type { AppDb } from "@/server/db/client";
 import { channelMeta, interactions, watchHistory } from "@/server/db/schema";
@@ -10,6 +11,7 @@ import {
   expandScoredPoolWithRelatedCandidates,
   HOME_RELATED_LIMITS,
   HOME_RELATED_LIMITS_DEEP,
+  type SubscriptionSeed,
 } from "@/server/recommendation/collect-related-candidates";
 import { collectTaggedVideoCandidates } from "@/server/recommendation/collect-tagged-candidates";
 import { getCollectedVideoIds } from "@/server/recommendation/collected-videos";
@@ -28,6 +30,7 @@ import {
 } from "@/server/recommendation/pool-invalidation";
 import { deriveRecommendationReason } from "@/server/recommendation/reason";
 import {
+  isLikelyShortVideo,
   isTooOldForRecommendations,
   isUnvettedKeywordSpam,
   keepCandidateForPersonalizedFeed,
@@ -132,8 +135,12 @@ function sliceRecommendationPool(
   };
 }
 
-/** Most recent likes lead (strongest endorsement), then engaged watches, newest first. */
-const RELATED_HISTORY_LIKE_SEEDS = 4;
+/**
+ * Most recent likes lead (strongest endorsement), then engaged watches, newest
+ * first. Kept to a couple of likes: subscription uploads take most related
+ * seeds, so a few recent likes no longer steer the whole feed.
+ */
+const RELATED_HISTORY_LIKE_SEEDS = 2;
 export function relatedHistorySeeds(
   signals: Pick<UserSignals, "likedVideoIds" | "recentEngagedVideoIds">,
 ): string[] {
@@ -152,6 +159,43 @@ export function relatedHistorySeeds(
     out.push(id);
   }
   return out;
+}
+
+/**
+ * Related-expansion seeds from subscriptions: the freshest upload of each
+ * subscribed channel paged this build, newest first. Watched uploads are fine
+ * seeds (the seed itself is never shown); disliked ones are not.
+ */
+export function subscriptionRelatedSeeds(
+  candidates: readonly { video: UnifiedVideo; source: string }[],
+  opts: {
+    nowSec: number;
+    excludeSeedIds: ReadonlySet<string>;
+    blockedChannelIds: ReadonlySet<string>;
+  },
+): SubscriptionSeed[] {
+  const newestByChannel = new Map<string, UnifiedVideo>();
+  for (const { video, source } of candidates) {
+    if (!source.startsWith("subscription:")) continue;
+    const channelId = source.slice("subscription:".length);
+    if (!video.videoId || opts.excludeSeedIds.has(video.videoId)) continue;
+    if (opts.blockedChannelIds.has(channelId)) continue;
+    if (isLikelyShortVideo(video)) continue;
+    if (isTooOldForRecommendations(video, opts.nowSec)) continue;
+    const prev = newestByChannel.get(channelId);
+    if (
+      !prev ||
+      publishedSortKey(video, opts.nowSec) > publishedSortKey(prev, opts.nowSec)
+    ) {
+      newestByChannel.set(channelId, video);
+    }
+  }
+  return [...newestByChannel.values()]
+    .sort(
+      (a, b) =>
+        publishedSortKey(b, opts.nowSec) - publishedSortKey(a, opts.nowSec),
+    )
+    .map((v) => ({ videoId: v.videoId, channelName: v.channelName }));
 }
 
 function clipTitle(title: string, max = 80): string {
@@ -401,22 +445,29 @@ async function ensureRecommendationPool(
     });
 
     const nowSec = Math.floor(Date.now() / 1000);
+    // Subscriptions are the centre of the home feed: they seed related
+    // expansion, form their own taste centroid and count as interest channels.
+    const allSubscribedChannelIds = getSubscribedChannelIds(db, userId);
     const scoreContext: RecommendationScoreContext = {
       recentCoverageByChannel,
       exploreSeed: dailyExploreSeed(userId, nowSec),
+      // With discovery mode on, subscribed uploads are stripped below, so the
+      // subscription lift only applies when they may appear in the feed.
+      subscribedChannelIds: userSettings.excludeSubscribedFromRecommendations
+        ? undefined
+        : allSubscribedChannelIds,
     };
 
     const blockedRecommendationChannels = new Set(
       userSettings.blockedRecommendationChannels,
     );
-    // Opt-in "discovery mode": the user's subscribed channels are kept in the
-    // pool so they still seed related-expansion and shape the taste centroid
-    // (subscriptions are a strong taste signal) — but their *own* uploads are
+    // Opt-in "discovery mode": the subscribed channels' *own* uploads are
     // stripped from the final output below, since those already live in the
-    // Subscriptions feed. Null when the setting is off (today's behavior).
+    // Subscriptions feed; they still seed related expansion and the taste
+    // centroid. Null when the setting is off.
     const subscribedChannelIds =
       userSettings.excludeSubscribedFromRecommendations
-        ? getSubscribedChannelIds(db, userId)
+        ? allSubscribedChannelIds
         : null;
     const { byId, sourceByVideoId } = mergeVideosByIdPreferNewer(
       taggedCandidates,
@@ -463,17 +514,21 @@ async function ensureRecommendationPool(
     );
     const tasteTitles = readCachedDetailTitlesForVideos(db, tasteVideoIds, 72);
     const keywordCorpus = buildKeywordCorpus(userSettings.tasteKeywords);
-    // Discovery mode: recent subscribed uploads become their own taste centroid
-    // so title similarity pulls in *related* content from non-subscribed
-    // channels, even though the subscribed videos themselves are stripped later.
-    const subscriptionTitles = subscribedChannelIds
-      ? unique
-          .filter((v) =>
-            sourceByVideoId.get(v.videoId)?.startsWith("subscription:"),
+    // Recent subscribed uploads (watched or not) form their own taste centroid
+    // so title similarity pulls in content like the subscriptions, including
+    // from non-subscribed channels in discovery mode.
+    const subscriptionTitles = Array.from(
+      new Set(
+        taggedCandidates
+          .filter(
+            ({ video, source }) =>
+              source.startsWith("subscription:") &&
+              !signals.dislikedVideoIds.has(video.videoId) &&
+              !isTooOldForRecommendations(video, nowSec),
           )
-          .map((v) => v.title)
-          .slice(0, 72)
-      : [];
+          .map(({ video }) => video.title),
+      ),
+    ).slice(0, 144);
     const poolTitles = unique.map((v) => v.title).slice(0, 200);
     const corpusTitles = buildTasteCorpusTitles([
       keywordCorpus,
@@ -484,7 +539,7 @@ async function ensureRecommendationPool(
     const interestChannelIds = new Set([
       ...signals.historyChannelIds,
       ...signals.interactionInterestChannelIds,
-      ...(subscribedChannelIds ?? []),
+      ...allSubscribedChannelIds,
     ]);
     const maxCh = Math.max(1, ...signals.channelWeights.values());
     // Per-interest centroids (keywords / liked+saved titles / subscriptions) so
@@ -572,6 +627,11 @@ async function ensureRecommendationPool(
           : HOME_RELATED_LIMITS,
         excludeVideoIds: excludedVideoIds,
         historySeedVideoIds: relatedHistorySeeds(signals),
+        subscriptionSeeds: subscriptionRelatedSeeds(taggedCandidates, {
+          nowSec,
+          excludeSeedIds: signals.dislikedVideoIds,
+          blockedChannelIds: blockedRecommendationChannels,
+        }),
         // Filtered at collection so the related cap counts fresh rows only.
         filterVideo: (v) => !isTooOldForRecommendations(v, nowSec),
         signals,

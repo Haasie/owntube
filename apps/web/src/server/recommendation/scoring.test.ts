@@ -549,3 +549,56 @@ describe("isTooOldForRecommendations", () => {
     expect(isTooOldForRecommendations(video({}), nowSec)).toBe(false);
   });
 });
+
+describe("subscription lift", () => {
+  const video: UnifiedVideo = {
+    videoId: "v1",
+    title: "Some upload",
+    channelId: "UCsub",
+    durationSeconds: 600,
+    publishedAt: Math.floor(Date.now() / 1000) - 86_400,
+  };
+  const model = buildTfidfModel(["unrelated"]);
+
+  it("lifts a subscribed channel's upload over an identical unsubscribed one", () => {
+    const signals = emptySignals({ totalWatches: 20 });
+    const plain = scoreCandidateDetail(video, signals, model, 1, {
+      recentCoverageByChannel: new Map(),
+    });
+    const subbed = scoreCandidateDetail(video, signals, model, 1, {
+      recentCoverageByChannel: new Map(),
+      subscribedChannelIds: new Set(["UCsub"]),
+    });
+    expect(plain.breakdown.components.subscription).toBe(0);
+    expect(subbed.breakdown.inputs.isSubscribed).toBe(true);
+    expect(subbed.score - plain.score).toBeCloseTo(
+      subbed.breakdown.components.subscription,
+    );
+    expect(subbed.breakdown.components.subscription).toBeGreaterThan(0.1);
+  });
+
+  it("outweighs a channel watched yesterday", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const recent = scoreCandidateDetail(
+      { ...video, channelId: "UCrecent" },
+      emptySignals({
+        totalWatches: 20,
+        channelLastWatchedAt: new Map([["UCrecent", nowSec - 86_400]]),
+      }),
+      model,
+      1,
+      { recentCoverageByChannel: new Map() },
+    );
+    const subbed = scoreCandidateDetail(
+      video,
+      emptySignals({ totalWatches: 20 }),
+      model,
+      1,
+      {
+        recentCoverageByChannel: new Map(),
+        subscribedChannelIds: new Set(["UCsub"]),
+      },
+    );
+    expect(subbed.score).toBeGreaterThan(recent.score);
+  });
+});

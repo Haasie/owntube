@@ -64,8 +64,13 @@ export type UserSignals = {
 };
 
 const WINDOW_SEC = 90 * 24 * 3600;
-/** Recent plays weigh more: `exp(-age / tau)` is near 1 right after a watch, then decays. */
-const CHANNEL_RECENCY_TAU_SEC = 6 * 24 * 3600;
+/**
+ * Recent plays weigh more: `exp(-age / tau)` is near 1 right after a watch,
+ * then decays. Raised from 6 days: with a week-long decay the channels opened in the last
+ * few days dominated every channel weight, so the home feed tracked recent
+ * viewing instead of the user's lasting interests.
+ */
+const CHANNEL_RECENCY_TAU_SEC = 30 * 24 * 3600;
 
 /** Likes/saves boost channel affinity with a slower decay than single watches. */
 const INTERACTION_CHANNEL_TAU_SEC = 45 * 24 * 3600;

@@ -20,7 +20,10 @@ import {
 } from "../src/server/recommendation/collect-related-candidates";
 import { collectTaggedVideoCandidates } from "../src/server/recommendation/collect-tagged-candidates";
 import { dailyExploreSeed } from "../src/server/recommendation/deterministic-jitter";
-import { relatedHistorySeeds } from "../src/server/recommendation/engine";
+import {
+  relatedHistorySeeds,
+  subscriptionRelatedSeeds,
+} from "../src/server/recommendation/engine";
 import { deriveRecommendationReason } from "../src/server/recommendation/reason";
 import {
   isUnvettedKeywordSpam,
@@ -184,6 +187,11 @@ async function main() {
       limits: HOME_RELATED_LIMITS,
       excludeVideoIds: watchedEver,
       historySeedVideoIds: relatedHistorySeeds(signals),
+      subscriptionSeeds: subscriptionRelatedSeeds(tagged, {
+        nowSec,
+        excludeSeedIds: signals.dislikedVideoIds,
+        blockedChannelIds: new Set(),
+      }),
       signals,
       tasteModel,
       dislikeModel,

@@ -209,6 +209,86 @@ describe("pickRelatedSeeds / history seeds", () => {
     expect(seeds[1]?.fromHistory).toBe(true);
   });
 
+  it("takes subscription seeds before history seeds, each within its cap", () => {
+    const seeds = pickRelatedSeeds(
+      [
+        { videoId: "pool1", rawScore: 0.9 },
+        { videoId: "pool2", rawScore: 0.5 },
+      ],
+      ["hist1", "hist2", "hist3"],
+      { maxSeeds: 6, maxSubscriptionSeeds: 3, maxHistorySeeds: 2 },
+      [
+        { videoId: "sub1", channelName: "A" },
+        { videoId: "sub2", channelName: "B" },
+        { videoId: "sub3" },
+        { videoId: "sub4" },
+      ],
+    );
+    expect(seeds.map((s) => s.videoId)).toEqual([
+      "sub1",
+      "sub2",
+      "sub3",
+      "hist1",
+      "hist2",
+      "pool1",
+    ]);
+    expect(seeds[0]).toMatchObject({
+      rawScore: 0.9,
+      fromSubscription: true,
+      subscriptionChannelName: "A",
+    });
+  });
+
+  it("labels rows related to a subscription upload with that channel", async () => {
+    vi.spyOn(proxy, "fetchRelatedVideos").mockImplementation(
+      async (_db, input) => ({
+        videos: [
+          {
+            videoId: `rel-${input.videoId}`,
+            title: `Something else ${input.videoId}`,
+            channelId: "UCother",
+            channelName: "Other",
+            durationSeconds: 300,
+          },
+        ],
+        sourceUsed: "invidious" as const,
+      }),
+    );
+    const scored: ScoredVideo[] = Array.from({ length: 8 }, (_, i) => ({
+      videoId: `pool${i}`,
+      title: `Pool ${i}`,
+      rawScore: 1 - i * 0.05,
+    }));
+    const { scored: expanded } = await expandScoredPoolWithRelatedCandidates({
+      db: {} as never,
+      scored,
+      coldStart: false,
+      limits: {
+        maxSeeds: 2,
+        maxSubscriptionSeeds: 1,
+        maxHistorySeeds: 1,
+        limitPerSeed: 5,
+        maxRelatedTotal: 10,
+      },
+      // The subscription seed was watched: it still expands.
+      excludeVideoIds: new Set(["sub1", "hist1"]),
+      historySeedVideoIds: ["hist1"],
+      subscriptionSeeds: [{ videoId: "sub1", channelName: "Subbed" }],
+      signals: emptySignals(),
+      tasteModel: buildTfidfModel(["pool"]),
+      maxCh: 1,
+      scoreContext: { recentCoverageByChannel: new Map() },
+    });
+    const fromSub = expanded.find((r) => r.videoId === "rel-sub1");
+    const fromHist = expanded.find((r) => r.videoId === "rel-hist1");
+    expect(fromSub?.recommendationReason).toEqual({
+      kind: "related",
+      channelName: "Subbed",
+    });
+    expect(fromHist?.recommendationReason?.channelName).toBeUndefined();
+    expect(fromSub?.rawScore ?? 0).toBeGreaterThan(fromHist?.rawScore ?? 0);
+  });
+
   it("uses pool seeds only when no history cap is set", () => {
     const seeds = pickRelatedSeeds(
       [{ videoId: "pool1", rawScore: 1 }],
