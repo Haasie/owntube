@@ -177,6 +177,13 @@ export function buildHlsSameOriginConfig(
     // render in-band captions, so the controller has no job here.
     timelineController: undefined,
     startFragPrefetch: true,
+    // hls.js defaults to ManagedMediaSource wherever it exists — iPadOS/macOS
+    // Safari expose it next to real MSE. MMS lets WebKit gate loading with
+    // `endstreaming`/`startstreaming`: it stopped hls.js ~30s ahead and never
+    // sent `startstreaming` after a seek, so seeks on iPad stalled in
+    // `seeking` for good. Use real MSE when present (MMS-only iPhones take
+    // native HLS anyway).
+    preferManagedMediaSource: false,
     // Deep buffer to absorb proxied-segment latency (Invidious→googlevideo can
     // deliver a segment slowly): keep a large cushion ahead so an occasional
     // slow segment drains buffer instead of stalling playback. Live keeps its
