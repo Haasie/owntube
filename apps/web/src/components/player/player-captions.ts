@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CaptionTrack } from "@/components/player/player-payload";
 import {
   readCaptionLangPref,
@@ -41,6 +41,70 @@ function stripMarkup(raw: string): string {
 
 /** A run of caption text and the playback time (s) at which it appears. */
 type TimedSegment = { at: number; text: string };
+
+/**
+ * Label of the synthetic track that mirrors the resolved caption text for
+ * native surfaces (Picture-in-Picture, Apple's fullscreen player). Those draw
+ * `showing` cues themselves, out of reach of our overlay — but handing them the
+ * raw YouTube ASR cues looks wrong: each cue carries inline `<HH:MM:SS.mmm>`
+ * word timings, and Chrome's UA stylesheet paints the not-yet-spoken words grey
+ * (`::cue(:future)`), while overlapping roll-up cues double up lines. So the
+ * real tracks stay `hidden` everywhere and this track carries one plain cue
+ * holding exactly the text our overlay would show, revealed word by word.
+ */
+const MIRROR_LABEL = "\u200bowntube-native-mirror";
+/** Far enough out that the single mirror cue stays active for any playback. */
+const MIRROR_CUE_END = 2 ** 31;
+
+type MirrorTrack = {
+  video: HTMLVideoElement;
+  track: TextTrack;
+  cue: VTTCue | null;
+};
+
+/** Escape text for a VTT cue payload so `<`/`&` read literally, not as markup. */
+function escapeCueText(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** Get (creating on first use per media element) the native mirror track. */
+function ensureMirror(
+  ref: React.MutableRefObject<MirrorTrack | null>,
+  video: HTMLVideoElement,
+): MirrorTrack | null {
+  if (typeof VTTCue === "undefined" || typeof video.addTextTrack !== "function")
+    return null;
+  // `addTextTrack` tracks live as long as the element; reuse ours until the
+  // block remounts a fresh <video>.
+  if (ref.current && ref.current.video === video) return ref.current;
+  const track = video.addTextTrack("captions", MIRROR_LABEL);
+  track.mode = "hidden";
+  ref.current = { video, track, cue: null };
+  return ref.current;
+}
+
+/** Replace the mirror cue's text (or clear it) so a native surface redraws. */
+function setMirrorText(mirror: MirrorTrack | null, text: string | null) {
+  if (!mirror) return;
+  if (mirror.cue) {
+    try {
+      mirror.track.removeCue(mirror.cue);
+    } catch {
+      // Already gone (e.g. track reset) — nothing to remove.
+    }
+    mirror.cue = null;
+  }
+  if (text === null) return;
+  // A fresh cue per change: swapping active cues is what reliably triggers a
+  // native re-layout in both Blink and WebKit (mutating `.text` in place is
+  // not).
+  const cue = new VTTCue(0, MIRROR_CUE_END, escapeCueText(text));
+  mirror.track.addCue(cue);
+  mirror.cue = cue;
+}
 
 const TS_TAG = /<(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\.(\d{3})>/g;
 
@@ -93,6 +157,7 @@ export function usePlayerCaptions(
   // must go dark then, or captions render twice — once natively in PiP and once
   // in the (still-visible) inline frame.
   const [nativePresentation, setNativePresentation] = useState(false);
+  const mirrorRef = useRef<MirrorTrack | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reactKey rebinds after the media element remounts.
   useEffect(() => {
@@ -150,20 +215,31 @@ export function usePlayerCaptions(
     const apply = () => {
       // In a NATIVE presentation (Picture-in-Picture, or Apple's fullscreen
       // video player on iPhone) the browser draws only `showing` cues on its
-      // own surface, which our in-page overlay can't reach. Inline (and in our
-      // element-fullscreen, where the overlay is on-screen) we keep the active
-      // track `hidden` and render the styled text ourselves.
+      // own surface, which our in-page overlay can't reach. The active source
+      // track still stays `hidden` there (its raw ASR cues would render with
+      // grey "future" words and doubled roll-up lines); instead the mirror
+      // track — one plain cue holding our resolved text — is set `showing`.
+      // Inline (and in our element-fullscreen, where the overlay is on-screen)
+      // the mirror stays `hidden` and we render the styled text ourselves.
       const inNativePresentation =
         document.pictureInPictureElement === video ||
         (video as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean })
           .webkitDisplayingFullscreen === true;
-      const activeMode: TextTrackMode = inNativePresentation
-        ? "showing"
-        : "hidden";
+      const mirror = wantLabel !== null ? ensureMirror(mirrorRef, video) : null;
+      // Without a mirror (no VTTCue support) fall back to showing the raw track
+      // natively — imperfect, but better than no captions in PiP.
+      const activeMode: TextTrackMode =
+        inNativePresentation && !mirror ? "showing" : "hidden";
+      const mirrorMode: TextTrackMode =
+        inNativePresentation && wantLabel !== null ? "showing" : "hidden";
       const list = video.textTracks;
       for (let i = 0; i < list.length; i++) {
         const tt = list[i];
         if (!tt) continue;
+        if (tt.label === MIRROR_LABEL) {
+          if (tt.mode !== mirrorMode) tt.mode = mirrorMode;
+          continue;
+        }
         // Tracks we didn't inject — e.g. dash.js surfacing the DASH manifest's
         // text AdaptationSets (those exist for ExoPlayer on the TV; the web
         // renders captions from its own <track> elements). Force them off, or
@@ -212,8 +288,10 @@ export function usePlayerCaptions(
         : null;
     if (!video || wantLabel === null) {
       setActiveText(null);
+      if (video) setMirrorText(mirrorRef.current, null);
       return;
     }
+    const mirror = ensureMirror(mirrorRef, video);
 
     const findTrack = () => {
       const list = video.textTracks;
@@ -263,6 +341,7 @@ export function usePlayerCaptions(
       if (next !== shown) {
         shown = next;
         setActiveText(next);
+        setMirrorText(mirror, next);
       }
     };
     const loop = () => {
@@ -284,6 +363,7 @@ export function usePlayerCaptions(
     video.textTracks.addEventListener?.("change", onCueChange);
     return () => {
       cancelAnimationFrame(raf);
+      setMirrorText(mirror, null);
       tt?.removeEventListener("cuechange", onCueChange);
       video.removeEventListener("loadedmetadata", onCueChange);
       video.textTracks.removeEventListener?.("change", onCueChange);
@@ -311,7 +391,7 @@ export function usePlayerCaptions(
     activeIndex,
     setActive,
     // Suppress the in-page overlay while a native surface (PiP / Apple
-    // fullscreen) is drawing the cues itself, so captions show only there.
+    // fullscreen) is drawing the mirrored cue itself, so captions show only there.
     activeText: nativePresentation ? null : activeText,
   };
 }
