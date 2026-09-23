@@ -176,7 +176,7 @@ export function HlsVodBlock({
     setDashDecision({
       key: reactKey,
       src: family
-        ? `${getMediaOrigin(window.location.origin)}/dash/${encodeURIComponent(videoId)}/manifest.mpd?video=${family}`
+        ? `${getMediaOrigin(window.location.origin)}/dash/${encodeURIComponent(videoId)}/manifest.mpd?video=${family}&captions=0`
         : null,
     });
   }, [src, videoId, reactKey, shortsMode, dashFailed, dvr]);

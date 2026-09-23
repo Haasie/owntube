@@ -244,7 +244,23 @@ async function fetchSidx(streamUrl: string, indexRange: string): Promise<Sidx> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), INVIDIOUS_TIMEOUT_MS);
   try {
-    const r = await fetch(streamUrl, {
+    let targetUrl = streamUrl;
+    try {
+      const u = new URL(streamUrl);
+      const pub = invidiousPublicBase();
+      const inv = invidiousBase();
+      if (inv) {
+        const pubHost = pub ? new URL(pub).host : null;
+        if (pubHost && u.host === pubHost) {
+          const invUrl = new URL(inv);
+          u.protocol = invUrl.protocol;
+          u.host = invUrl.host;
+          u.port = invUrl.port;
+          targetUrl = u.toString();
+        }
+      }
+    } catch {}
+    const r = await fetch(targetUrl, {
       headers: { range: `bytes=${indexRange}` },
       signal: controller.signal,
       cache: "no-store",
@@ -338,8 +354,9 @@ export function pickAudioTracks(af: AdaptiveFormat[]): AudioTrackVariant[] {
 
   const groups = new Map<string, Row[]>();
   for (const r of rows) {
-    // Rows without xtags all describe the same lone track (multi-host repeats).
-    const key = r.x.raw ? `${r.x.lang ?? ""}|${r.x.acont ?? ""}` : "";
+    // Rows without lang or acont describe the same lone track (e.g. DRC variants or multi-host repeats).
+    const key =
+      r.x.lang || r.x.acont ? `${r.x.lang ?? ""}|${r.x.acont ?? ""}` : "";
     const g = groups.get(key);
     if (g) g.push(r);
     else groups.set(key, [r]);
@@ -358,10 +375,14 @@ export function pickAudioTracks(af: AdaptiveFormat[]): AudioTrackVariant[] {
       (a.x.acont === "original" ? 0 : 1) - (b.x.acont === "original" ? 0 : 1),
   );
 
+  const hasExplicitOriginal = chosen.some((r) => r.x.acont === "original");
   return chosen.map((r, i) => ({
     format: r.f,
     lang: r.x.lang,
-    isOriginal: r.x.acont === "original" || chosen.length === 1,
+    isOriginal:
+      r.x.acont === "original" ||
+      (!hasExplicitOriginal && i === 0) ||
+      chosen.length === 1,
     isDefault: i === 0,
     xtags: r.x.raw,
   }));
@@ -409,7 +430,7 @@ export function buildMasterPlaylist(
     lines.push(
       `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="${name}"${language},DEFAULT=${
         t.isDefault ? "YES" : "NO"
-      },AUTOSELECT=YES,URI="${mediaPlaylistUri(t)}"`,
+      },AUTOSELECT=${t.isDefault ? "YES" : "NO"},URI="${mediaPlaylistUri(t)}"`,
     );
   }
   for (const v of videos) {

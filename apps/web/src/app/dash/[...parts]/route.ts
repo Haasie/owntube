@@ -278,11 +278,22 @@ async function handleGET(
   const maxHeight =
     Number.isFinite(maxHeightRaw) && maxHeightRaw >= 144 ? maxHeightRaw : null;
 
+  // Web clients render captions via <track> and pass captions=0 to avoid
+  // manifest bloat and dash.js text loader 404 aborts. TV clients omit it.
+  const captionsRaw = params.get("captions");
+  const includeCaptions = captionsRaw !== "0" && captionsRaw !== "false";
+
   // Fire and forget: the manifest response shouldn't wait on history.
   void recordPlay(request, videoId);
 
   try {
-    const body = await generateMpd(videoId, family, audioLang, maxHeight);
+    const body = await generateMpd(
+      videoId,
+      family,
+      audioLang,
+      maxHeight,
+      includeCaptions,
+    );
     return new Response(body, {
       headers: {
         "content-type": MPD_CONTENT_TYPE,

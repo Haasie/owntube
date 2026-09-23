@@ -311,6 +311,7 @@ export async function generateMpd(
   family: DashVideoFamily,
   audioLang?: string | null,
   maxHeight?: number | null,
+  includeCaptions = true,
 ): Promise<string> {
   const af = await fetchAdaptiveFormats(videoId);
   let videos = pickDashVideoFormats(af, family);
@@ -335,14 +336,14 @@ export async function generateMpd(
     throw new Error("no usable adaptive video + AAC audio streams");
   }
   // Subtitles are best-effort: a caption lookup failure shouldn't cost playback.
-  const captions = await fetchVideoCaptions(videoId).catch(
-    () => [] as InvidiousCaption[],
-  );
+  const captions = includeCaptions
+    ? await fetchVideoCaptions(videoId).catch(() => [] as InvidiousCaption[])
+    : [];
   return buildMpd(
     videos,
     audioTracks,
     durationSecondsFromFormats(af),
-    videoId,
+    includeCaptions ? videoId : undefined,
     captions,
   );
 }

@@ -71,6 +71,19 @@ describe("pickAudioTracks", () => {
     expect(tracks[0]?.lang).toBeNull();
   });
 
+  it("collapses drc tracks without language to a single original track", () => {
+    const aacDrc: AdaptiveFormat = {
+      ...aacPlain,
+      bitrate: 130_000,
+      url: `https://inv.example/videoplayback?itag=140&dur=562.433&xtags=${xt("drc=1")}`,
+    };
+    const tracks = pickAudioTracks([aacPlain, aacDrc]);
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0]?.isDefault).toBe(true);
+    expect(tracks[0]?.isOriginal).toBe(true);
+    expect(tracks[0]?.lang).toBeNull();
+  });
+
   it("orders the original before dubs even when upstream lists dubs first", () => {
     const tracks = pickAudioTracks([dubEn, originalNlDrc, originalNl]);
     expect(tracks.map((t) => t.lang)).toEqual(["nl-NL", "en-US"]);
@@ -97,7 +110,7 @@ describe("buildMasterPlaylist", () => {
       `NAME="Dutch (Original)",LANGUAGE="nl-NL",DEFAULT=YES,AUTOSELECT=YES,URI="media.m3u8?itag=140&xtags=${xt("acont=original:lang=nl-NL")}"`,
     );
     expect(m3u8).toContain(
-      `NAME="English",LANGUAGE="en-US",DEFAULT=NO,AUTOSELECT=YES,URI="media.m3u8?itag=140&xtags=${xt("acont=dubbed-auto:lang=en-US")}"`,
+      `NAME="English",LANGUAGE="en-US",DEFAULT=NO,AUTOSELECT=NO,URI="media.m3u8?itag=140&xtags=${xt("acont=dubbed-auto:lang=en-US")}"`,
     );
     // Variant rows still reference the shared audio group.
     expect(m3u8).toContain('AUDIO="aud"');
