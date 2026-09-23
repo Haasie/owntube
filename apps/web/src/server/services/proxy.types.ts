@@ -222,9 +222,9 @@ export const streamSourceSchema = z.object({
    */
   audioTrackDisplayName: z.string().optional(),
   /**
-   * Invidious `audioTrack.audioIsDefault`: true for the video's original
-   * (undubbed) audio. Replaces guessing at `acont=original` inside the stream
-   * URL's `xtags` parameter.
+   * True for the video's original (undubbed) audio: the stream URL's `xtags`
+   * `acont=original`, else the display name's "original". Not Invidious
+   * `audioTrack.audioIsDefault`, which follows the requester's locale.
    */
   audioIsOriginal: z.boolean().optional(),
   /**

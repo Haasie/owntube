@@ -406,10 +406,14 @@ export function buildMasterPlaylist(
   for (const [i, t] of audioTracks.entries()) {
     const name = audioTracks.length === 1 ? "Audio" : audioTrackName(t, i);
     const language = t.lang ? `,LANGUAGE="${t.lang}"` : "";
+    // AUTOSELECT only on the default (original) track: Apple's native player
+    // lets an AUTOSELECT=YES rendition that matches the system language beat
+    // DEFAULT=YES, so an English iPhone started Dutch videos on the English
+    // auto-dub. Dubs stay manually selectable (the spec requires
+    // AUTOSELECT=YES on the DEFAULT=YES rendition).
+    const flag = t.isDefault ? "YES" : "NO";
     lines.push(
-      `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="${name}"${language},DEFAULT=${
-        t.isDefault ? "YES" : "NO"
-      },AUTOSELECT=YES,URI="${mediaPlaylistUri(t)}"`,
+      `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="${name}"${language},DEFAULT=${flag},AUTOSELECT=${flag},URI="${mediaPlaylistUri(t)}"`,
     );
   }
   for (const v of videos) {
