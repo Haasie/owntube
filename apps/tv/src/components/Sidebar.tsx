@@ -19,6 +19,7 @@ export type Section =
   | "saved"
   | "trending"
   | "shorts"
+  | "library"
   | "playlists"
   | "queue"
   | "history"
@@ -43,6 +44,7 @@ export const SECTIONS: { key: Section; label: string; icon: FeatherName }[] = [
   { key: "recommended", label: "Recommended", icon: "star" },
   { key: "trending", label: "Trending", icon: "trending-up" },
   { key: "shorts", label: "Shorts", icon: "smartphone" },
+  { key: "library", label: "Library", icon: "layers" },
   { key: "saved", label: "Saved", icon: "bookmark" },
   { key: "playlists", label: "Playlists", icon: "folder" },
   { key: "history", label: "History", icon: "clock" },

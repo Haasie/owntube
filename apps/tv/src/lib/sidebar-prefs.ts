@@ -18,10 +18,23 @@ export const ALL_SECTIONS: Section[] = [
   "recommended",
   "trending",
   "shorts",
+  "library",
   "saved",
   "playlists",
   "history",
   "settings",
+];
+
+/**
+ * The sections Library gathers up. Off the rail by default, as on the
+ * YouTube TV client, but still there in the sidebar editor for anyone who
+ * wants one back as a top-level entry.
+ */
+export const LIBRARY_SECTIONS: Section[] = [
+  "queue",
+  "saved",
+  "playlists",
+  "history",
 ];
 
 export type SidebarPrefs = {
@@ -29,7 +42,9 @@ export type SidebarPrefs = {
   order: Section[];
 };
 
-export const DEFAULT_PREFS: SidebarPrefs = { order: ALL_SECTIONS };
+export const DEFAULT_PREFS: SidebarPrefs = {
+  order: ALL_SECTIONS.filter((s) => !LIBRARY_SECTIONS.includes(s)),
+};
 
 /**
  * Every section the stored prefs have been offered. A section added since
@@ -48,9 +63,25 @@ function withNewSections(order: Section[], known: unknown): Section[] {
     (s) => !knownSet.has(s) && !order.includes(s),
   );
   if (added.length === 0) return order;
+  // Library's arrival folds the sections it gathers: it takes the place of
+  // the first of them on the rail and the rest come off. The editor still
+  // lists them, so a hidden one is a single toggle away.
+  let rest = added;
+  if (added.includes("library")) {
+    const first = order.findIndex((s) => LIBRARY_SECTIONS.includes(s));
+    const kept = order.filter((s) => !LIBRARY_SECTIONS.includes(s));
+    const at = first >= 0 ? Math.min(first, kept.length) : kept.length;
+    order = [...kept.slice(0, at), "library", ...kept.slice(at)];
+    // A gathered section this install never saw (Saved, for older prefs)
+    // arrives folded too, not as a new rail entry.
+    rest = added.filter(
+      (s) => s !== "library" && !LIBRARY_SECTIONS.includes(s),
+    );
+  }
+  if (rest.length === 0) return order;
   const settings = order.indexOf("settings");
   const at = settings >= 0 ? settings : order.length;
-  return [...order.slice(0, at), ...added, ...order.slice(at)];
+  return [...order.slice(0, at), ...rest, ...order.slice(at)];
 }
 
 /** The sections that existed before `known` was stored. */
