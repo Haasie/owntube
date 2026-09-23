@@ -338,7 +338,14 @@ export function usePlayerCaptions(
         .replace(/\n{2,}/g, "\n")
         .trim();
       const next = text.length > 0 ? text : null;
-      if (next !== shown) {
+      // hls.js wipes every text track's cues on manifest load / media attach
+      // (its TimelineController `_cleanTracks`), ours included — so re-push
+      // the mirror cue whenever it has gone missing, not only on text changes.
+      const mirrorWiped =
+        mirror !== null &&
+        mirror.cue !== null &&
+        (mirror.track.cues?.length ?? 0) === 0;
+      if (next !== shown || (mirrorWiped && next !== null)) {
         shown = next;
         setActiveText(next);
         setMirrorText(mirror, next);
