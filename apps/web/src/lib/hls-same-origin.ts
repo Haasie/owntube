@@ -29,7 +29,8 @@ function isAlreadyProxied(url: URL, appOrigin: string): boolean {
       url.pathname === "/yt-hls" ||
       url.pathname.startsWith("/stream/") ||
       // Legacy prefix, still present in manifests handed out before Phase 5.
-      url.pathname.startsWith("/invidious/")
+      url.pathname.startsWith("/invidious/") ||
+      url.pathname.startsWith("/hls/")
     );
   } catch {
     return false;

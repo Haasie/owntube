@@ -527,7 +527,9 @@ export async function generateMediaPlaylist(
     f.url,
     f.index,
   );
-  const uri = segmentUri(f.url);
+  const uri = xtags
+    ? `stream.mp4?itag=${encodeURIComponent(itag)}&xtags=${encodeURIComponent(xtags)}`
+    : `stream.mp4?itag=${encodeURIComponent(itag)}`;
   const [ia, ib] = f.init.split("-").map(Number);
   const targetDuration = Math.ceil(
     sidx.refs.reduce((m, r) => Math.max(m, r.duration), 0),
@@ -550,4 +552,42 @@ export async function generateMediaPlaylist(
   }
   lines.push("#EXT-X-ENDLIST");
   return `${lines.join("\n")}\n`;
+}
+
+/** Resolves an adaptive format row for HLS media segment proxying. */
+export async function getAdaptiveFormat(
+  videoId: string,
+  itag: string,
+  xtags?: string | null,
+): Promise<AdaptiveFormat | undefined> {
+  const af = await fetchAdaptiveFormats(videoId);
+  if (String(itag) === "140" && !xtags) {
+    const audios = pickAudioTracks(af);
+    return audios[0]?.format;
+  }
+  return af.find(
+    (x) =>
+      String(x.itag) === String(itag) &&
+      (!xtags || audioXtagsOf(x.url).raw === xtags),
+  );
+}
+
+/** Rewrites public Invidious base to internal container URL when applicable. */
+export function rewriteUpstreamUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const pub = invidiousPublicBase();
+    const inv = invidiousBase();
+    if (inv) {
+      const pubHost = pub ? new URL(pub).host : null;
+      if (pubHost && u.host === pubHost) {
+        const invUrl = new URL(inv);
+        u.protocol = invUrl.protocol;
+        u.host = invUrl.host;
+        u.port = invUrl.port;
+        return u.toString();
+      }
+    }
+  } catch {}
+  return url;
 }
