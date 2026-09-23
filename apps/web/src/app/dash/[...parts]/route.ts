@@ -53,6 +53,7 @@ async function recordPlay(request: Request, videoId: string): Promise<void> {
       videoId,
       channelId: detail.channelId,
       videoTitle: detail.title,
+      channelName: detail.channelName,
       videoDurationSeconds: detail.durationSeconds,
     });
   } catch {
