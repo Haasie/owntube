@@ -445,8 +445,9 @@ export function buildMasterPlaylist(
   // machine-translated dubs (with divergent sidx durations and query-encoded URIs)
   // are declared in EXT-X-MEDIA. Serving the single chosen original audio track
   // ensures 100% reliable hardware-accelerated playback across all iOS WebKit browsers.
+  const langAttr = defaultAudio.lang ? `,LANGUAGE="${defaultAudio.lang}"` : "";
   lines.push(
-    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES,URI="media.m3u8?itag=140"',
+    `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES${langAttr},CHANNELS="2",URI="media.m3u8?itag=140"`,
   );
   for (const v of videos) {
     const bandwidth = (Number(v.bitrate) || 0) + audioBitrate;

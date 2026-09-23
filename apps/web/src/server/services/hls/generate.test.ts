@@ -117,7 +117,7 @@ describe("buildMasterPlaylist", () => {
   it("keeps the legacy single-audio rendition shape", () => {
     const m3u8 = buildMasterPlaylist([avc720], pickAudioTracks([aacPlain]));
     expect(m3u8).toContain(
-      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES,URI="media.m3u8?itag=140"',
+      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="2",URI="media.m3u8?itag=140"',
     );
   });
 
@@ -127,7 +127,7 @@ describe("buildMasterPlaylist", () => {
       pickAudioTracks([dubEn, originalNlDrc, originalNl]),
     );
     expect(m3u8).toContain(
-      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES,URI="media.m3u8?itag=140"',
+      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES,LANGUAGE="nl-NL",CHANNELS="2",URI="media.m3u8?itag=140"',
     );
     // Variant rows still reference the shared audio group.
     expect(m3u8).toContain('AUDIO="aud"');

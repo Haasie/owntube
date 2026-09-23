@@ -43,6 +43,7 @@ async function handleGET(
       return new Response(body, {
         headers: {
           "content-type": M3U8_CONTENT_TYPE,
+          "content-length": Buffer.byteLength(body).toString(),
           "cache-control": "no-store",
         },
       });
@@ -64,11 +65,13 @@ async function handleGET(
       return new Response(body, {
         headers: {
           "content-type": M3U8_CONTENT_TYPE,
+          "content-length": Buffer.byteLength(body).toString(),
           "cache-control": "no-store",
         },
       });
     }
     if (file === "stream.mp4") {
+      console.log(`[HLS] GET stream.mp4 videoId=${videoId} range=${request.headers.get("range")}`);
       const params = new URL(request.url).searchParams;
       const itag = params.get("itag");
       if (!itag || !/^\d+$/.test(itag)) {

@@ -34,5 +34,11 @@ export type VideoPlayerPayload =
        * `hls-vod-block.tsx`.
        */
       dvr?: boolean;
+      /**
+       * Progressive muxed fallback variants. When HLS playback fails or stalls
+       * (e.g. strict Apple AVPlayer rejections on iOS WebKit), the player seamlessly
+       * falls back to the progressive stream.
+       */
+      progressiveFallback?: ProxiedVariant[];
     }
   | { mode: "progressive"; variants: ProxiedVariant[] };

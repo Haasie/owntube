@@ -355,7 +355,12 @@ function buildAllSplitVariants(
  * <video> + <audio> sync for adaptive-only.
  */
 export type WatchPlayback =
-  | { kind: "hls"; url: string; onlyDashOrUnsupported: false }
+  | {
+      kind: "hls";
+      url: string;
+      onlyDashOrUnsupported: false;
+      progressiveFallback?: PlayableVariant[];
+    }
   /**
    * A live broadcast with no HLS: YouTube's own dynamic DASH manifest, via
    * invidious-companion (`/dash/<id>/live.mpd`, see `live-manifest.ts`).
@@ -689,10 +694,15 @@ export function buildWatchPlayback(
   // with no adaptive streams — or whose adaptive streams lack the byte-range
   // indexes the synthesized manifest is built from (those 502).
   if (canSynthesizeManifest(detail)) {
+    const progressiveFallback =
+      merged.length > 0
+        ? preferPlaybackDefault(buildFullQualitySelectorList(merged))
+        : undefined;
     return {
       kind: "hls",
       url: `/hls/${detail.videoId}/master.m3u8`,
       onlyDashOrUnsupported: false,
+      progressiveFallback,
     };
   }
 

@@ -227,7 +227,14 @@ export function VideoPlayer({
     [setCinemaMode],
   );
 
-  const effectivePayload: VideoPlayerPayload = payload;
+  const [overridePayload, setOverridePayload] =
+    useState<VideoPlayerPayload | null>(null);
+
+  useEffect(() => {
+    setOverridePayload(null);
+  }, [videoId]);
+
+  const effectivePayload: VideoPlayerPayload = overridePayload ?? payload;
 
   const displayPoster = shortsMode ? undefined : poster;
 
@@ -380,6 +387,7 @@ export function VideoPlayer({
     [],
   );
 
+  const lastResetVideoIdRef = useRef(videoId);
   useEffect(() => {
     if (
       miniMode &&
@@ -392,11 +400,15 @@ export function VideoPlayer({
       ? "360p-muxed"
       : (defaultPlaybackQualityProp ?? readDefaultPlaybackQuality());
     setQualityIndex(initialQualityIndexForPayload(effectivePayload, pref));
-    setResumeSeekSeconds(undefined);
+    if (lastResetVideoIdRef.current !== videoId) {
+      lastResetVideoIdRef.current = videoId;
+      setResumeSeekSeconds(undefined);
+    }
     setSettingsOpen(false);
     variantFallbackAttemptsRef.current = 0;
   }, [
     effectivePayload,
+    videoId,
     defaultPlaybackQualityProp,
     initialQualityIndexProp,
     miniMode,
@@ -453,6 +465,40 @@ export function VideoPlayer({
 
   const handlePlaybackError = useCallback(() => {
     if (
+      effectivePayload.mode === "hls" &&
+      effectivePayload.progressiveFallback &&
+      effectivePayload.progressiveFallback.length > 0
+    ) {
+      console.warn(
+        "[VideoPlayer] HLS playback failed, falling back to progressive variants",
+        effectivePayload.progressiveFallback,
+      );
+      try {
+        void fetch("/api/client-log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            component: "VideoPlayer",
+            videoId,
+            eventType: "hls_fallback_to_progressive",
+            fallbackCount: effectivePayload.progressiveFallback.length,
+          }),
+        }).catch(() => {});
+      } catch {}
+      const media = playerMediaRootRef.current?.querySelector("video");
+      const currentTime =
+        media && Number.isFinite(media.currentTime) ? media.currentTime : 0;
+      if (currentTime > 0) {
+        setResumeSeekSeconds(currentTime);
+      }
+      setOverridePayload({
+        mode: "progressive",
+        variants: effectivePayload.progressiveFallback,
+      });
+      return;
+    }
+
+    if (
       effectivePayload.mode === "progressive" &&
       progressiveMobileSafe &&
       progressiveMobileSafe.length > 1
@@ -506,7 +552,7 @@ export function VideoPlayer({
     }
   }, [
     active,
-    effectivePayload.mode,
+    effectivePayload,
     onEndedExternal,
     progressiveMobileSafe,
     qualityIndex,

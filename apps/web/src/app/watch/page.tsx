@@ -239,6 +239,14 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
               requestHost,
             ),
             dvr: detail.isPostLiveDvr === true,
+            progressiveFallback:
+              rawPlayback.kind === "hls" && rawPlayback.progressiveFallback?.length
+                ? toProxiedOrDirectVariants(
+                    rawPlayback.progressiveFallback,
+                    mediaOrigin,
+                    requestHost,
+                  )
+                : undefined,
           }
         : rawPlayback.kind === "progressive"
           ? {
@@ -437,9 +445,34 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
                   </h1>
                   <p className="m-0 flex flex-wrap items-center gap-2 text-sm text-[hsl(var(--muted-foreground))]">
                     {isLive ? (
-                      <span className="rounded-md bg-[hsl(var(--primary))] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">
-                        LIVE
-                      </span>
+                      <>
+                        <span className="rounded-md bg-[hsl(var(--primary))] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">
+                          LIVE
+                        </span>
+                        <a
+                          href={`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-2 py-0.5 text-xs font-medium text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]"
+                          title="Watch live on YouTube"
+                        >
+                          <span>Watch on YouTube</span>
+                          <svg
+                            className="h-3 w-3 opacity-70"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            aria-hidden="true"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                            />
+                          </svg>
+                        </a>
+                      </>
                     ) : null}
                     <span>
                       {viewsLabel ?? null}

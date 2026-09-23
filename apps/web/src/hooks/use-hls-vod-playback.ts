@@ -192,16 +192,74 @@ export function useHlsVodPlayback(
       trackEvents?.addEventListener("addtrack", syncNativeAudio);
       trackEvents?.addEventListener("removetrack", syncNativeAudio);
       trackEvents?.addEventListener("change", syncNativeAudio);
+      let loaded = false;
+      let watchdogTimer: number | null = null;
+
+      const reportClientLog = (
+        eventType: string,
+        details?: Record<string, unknown>,
+      ) => {
+        try {
+          void fetch("/api/client-log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              component: "useHlsVodPlayback-native",
+              src,
+              eventType,
+              readyState: video.readyState,
+              networkState: video.networkState,
+              error: video.error
+                ? { code: video.error.code, message: video.error.message }
+                : null,
+              ...details,
+            }),
+          }).catch(() => {});
+        } catch {}
+      };
+
       const onLoaded = () => {
+        loaded = true;
+        if (watchdogTimer !== null) {
+          window.clearTimeout(watchdogTimer);
+          watchdogTimer = null;
+        }
         applyStartAndPlay();
         syncNativeAudio();
       };
-      const onError = () => onFatalErrorRef.current?.();
+      const onError = () => {
+        if (watchdogTimer !== null) {
+          window.clearTimeout(watchdogTimer);
+          watchdogTimer = null;
+        }
+        reportClientLog("native_hls_error");
+        onFatalErrorRef.current?.();
+      };
       video.addEventListener("loadedmetadata", onLoaded, { once: true });
       video.addEventListener("error", onError);
       video.src = src;
       video.load();
+
+      // Watchdog: on iOS WebKit, AVPlayer can stall or fail silently on unsupported/rejected HLS
+      // manifests without dispatching an HTMLMediaElement error event.
+      // If loadedmetadata hasn't fired within 3.5s and readyState is HAVE_NOTHING (0), trigger fatal fallback.
+      watchdogTimer = window.setTimeout(() => {
+        if (
+          !loaded &&
+          (video.readyState === 0 ||
+            !Number.isFinite(video.duration) ||
+            video.duration === 0)
+        ) {
+          reportClientLog("watchdog_timeout_fallback", { timeoutMs: 3500 });
+          onFatalErrorRef.current?.();
+        }
+      }, 3500);
+
       return () => {
+        if (watchdogTimer !== null) {
+          window.clearTimeout(watchdogTimer);
+          watchdogTimer = null;
+        }
         setAudioImplRef.current = () => {};
         trackEvents?.removeEventListener("addtrack", syncNativeAudio);
         trackEvents?.removeEventListener("removetrack", syncNativeAudio);
@@ -234,7 +292,22 @@ export function useHlsVodPlayback(
       hls = new HlsCtor(buildHlsSameOriginConfig(mediaOrigin));
       hlsRef.current = hls;
       hls.on(HlsCtor.Events.ERROR, (_e, data) => {
-        if (data.fatal) onFatalErrorRef.current?.();
+        if (data.fatal) {
+          try {
+            void fetch("/api/client-log", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                component: "useHlsVodPlayback-hlsjs",
+                src,
+                eventType: "fatal_error",
+                errorType: data.type,
+                details: data.details,
+              }),
+            }).catch(() => {});
+          } catch {}
+          onFatalErrorRef.current?.();
+        }
       });
       hls.on(HlsCtor.Events.MANIFEST_PARSED, () => applyStartAndPlay());
       // Language renditions from the master's audio group. hls.js starts on
