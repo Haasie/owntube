@@ -480,6 +480,7 @@ export function PlayerChrome({
             current={seekPos}
             duration={adapter.duration}
             buffered={adapter.bufferedEnd}
+            interactive={chromeShown}
             onScrub={(t) => {
               setScrub(t);
               adapter.seekPreview(t);
@@ -520,6 +521,7 @@ export function PlayerChrome({
               sponsorSegments={sponsorSegments}
               scrubPreview={scrubPreview ?? null}
               completed={watchedCompleted}
+              interactive={chromeShown}
               onScrub={(t) => {
                 setScrub(t);
                 adapter.seekPreview(t);
