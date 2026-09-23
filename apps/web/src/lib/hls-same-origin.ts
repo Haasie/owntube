@@ -169,6 +169,13 @@ export function buildHlsSameOriginConfig(
     // hls.js to render in-manifest subtitles, so this is a safe no-op for
     // subtitles and leaves our tracks untouched (matching native-HLS behavior).
     renderTextTracksNatively: false,
+    // Drop the TimelineController outright. On every MANIFEST_LOADING it runs
+    // `_cleanTracks`, which clears the cues of *every* TextTrack on the element
+    // (not just its own) regardless of `renderTextTracksNatively`, so the
+    // sidecar captions went blank until the <track> was reloaded. Our HLS
+    // manifests carry no SUBTITLES / CLOSED-CAPTIONS renditions and we never
+    // render in-band captions, so the controller has no job here.
+    timelineController: undefined,
     startFragPrefetch: true,
     // Deep buffer to absorb proxied-segment latency (Invidious→googlevideo can
     // deliver a segment slowly): keep a large cushion ahead so an occasional
