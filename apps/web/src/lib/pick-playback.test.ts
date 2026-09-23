@@ -116,11 +116,12 @@ describe("buildWatchPlayback", () => {
         ],
       }),
     );
-    expect(w).toEqual({
+    expect(w).toMatchObject({
       kind: "hls",
       url: "/hls/x/master.m3u8",
       onlyDashOrUnsupported: false,
     });
+    expect(w.kind === "hls" && (w.progressiveFallback?.length ?? 0)).toBeGreaterThan(0);
   });
 
   it("falls back to native HLS when adaptive streams lack byte-range indexes", () => {
@@ -182,11 +183,12 @@ describe("buildWatchPlayback", () => {
         ],
       }),
     );
-    expect(w).toEqual({
+    expect(w).toMatchObject({
       kind: "hls",
       url: "/hls/x/master.m3u8",
       onlyDashOrUnsupported: false,
     });
+    expect(w.kind === "hls" && (w.progressiveFallback?.length ?? 0)).toBeGreaterThan(0);
   });
 
   it("keeps the split picker when upstream reports two audio languages", () => {
