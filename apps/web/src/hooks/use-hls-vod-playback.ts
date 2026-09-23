@@ -8,6 +8,7 @@ import {
   getClientAppOrigin,
   installSameOriginMediaFetchGuard,
 } from "@/lib/hls-same-origin";
+import { isIosLikeBrowser } from "@/lib/ios-playback";
 import { getMediaOrigin } from "@/lib/media-origin";
 
 /**
@@ -143,17 +144,16 @@ export function useHlsVodPlayback(
     // Website" mode — both report a real, unmanaged `window.MediaSource`)
     // rejects our byte-range fMP4 VOD manifest natively with
     // MEDIA_ERR_SRC_NOT_SUPPORTED. hls.js parses the manifest itself and plays
-    // it over real MSE there. So we only take the native path when the browser
-    // has NO real MediaSource — i.e. iPhone/iPad-class WebKit that exposes only
-    // ManagedMediaSource (where hls.js would fall back to MMS and stall the
-    // video track, and where native HLS works). See use-dash-playback for the
-    // sibling MMS/MSE notes.
+    // it over real MSE there. On iPhone/iPad (WebKit), modern iOS (17.4+, 18)
+    // exposes `window.MediaSource` but MSE/MMS stalls when using hls.js.
+    // Native HLS works reliably on iOS, so we always prefer native on iOS devices.
+    const isIos = isIosLikeBrowser();
     const hasRealMediaSource =
       typeof window !== "undefined" && "MediaSource" in window;
     const canNative =
       video.canPlayType("application/vnd.apple.mpegurl") !== "" ||
       video.canPlayType("application/x-mpegURL") !== "";
-    if (canNative && !hasRealMediaSource) {
+    if (canNative && (isIos || !hasRealMediaSource)) {
       // Language renditions surface on WebKit's AudioTrackList; the manifest's
       // DEFAULT=YES (the original — see hls/generate.ts) picks the start track.
       const syncNativeAudio = () => {
