@@ -18,7 +18,6 @@ export const ALL_SECTIONS: Section[] = [
   "recommended",
   "trending",
   "shorts",
-  "library",
   "saved",
   "playlists",
   "history",
@@ -26,25 +25,29 @@ export const ALL_SECTIONS: Section[] = [
 ];
 
 /**
- * The sections Library gathers up. Off the rail by default, as on the
- * YouTube TV client, but still there in the sidebar editor for anyone who
- * wants one back as a top-level entry.
+ * The sections a since-removed Library entry gathered up. Installs that
+ * stored it get these back in its place on the rail (see `unfoldLibrary`).
  */
-export const LIBRARY_SECTIONS: Section[] = [
-  "queue",
-  "saved",
-  "playlists",
-  "history",
-];
+const LIBRARY_SECTIONS: Section[] = ["queue", "saved", "playlists", "history"];
 
 export type SidebarPrefs = {
   /** Ordered; sections absent from this list are hidden. */
   order: Section[];
 };
 
-export const DEFAULT_PREFS: SidebarPrefs = {
-  order: ALL_SECTIONS.filter((s) => !LIBRARY_SECTIONS.includes(s)),
-};
+export const DEFAULT_PREFS: SidebarPrefs = { order: ALL_SECTIONS };
+
+/**
+ * Library folded Queue, Saved, Playlists and History off the rail. With it
+ * gone, a stored order that still names it gets those four back where it sat
+ * (any already on the rail stay where they are).
+ */
+function unfoldLibrary(order: unknown): unknown {
+  if (!Array.isArray(order) || !order.includes("library")) return order;
+  const at = order.indexOf("library");
+  const missing = LIBRARY_SECTIONS.filter((s) => !order.includes(s));
+  return [...order.slice(0, at), ...missing, ...order.slice(at + 1)];
+}
 
 /**
  * Every section the stored prefs have been offered. A section added since
@@ -63,25 +66,9 @@ function withNewSections(order: Section[], known: unknown): Section[] {
     (s) => !knownSet.has(s) && !order.includes(s),
   );
   if (added.length === 0) return order;
-  // Library's arrival folds the sections it gathers: it takes the place of
-  // the first of them on the rail and the rest come off. The editor still
-  // lists them, so a hidden one is a single toggle away.
-  let rest = added;
-  if (added.includes("library")) {
-    const first = order.findIndex((s) => LIBRARY_SECTIONS.includes(s));
-    const kept = order.filter((s) => !LIBRARY_SECTIONS.includes(s));
-    const at = first >= 0 ? Math.min(first, kept.length) : kept.length;
-    order = [...kept.slice(0, at), "library", ...kept.slice(at)];
-    // A gathered section this install never saw (Saved, for older prefs)
-    // arrives folded too, not as a new rail entry.
-    rest = added.filter(
-      (s) => s !== "library" && !LIBRARY_SECTIONS.includes(s),
-    );
-  }
-  if (rest.length === 0) return order;
   const settings = order.indexOf("settings");
   const at = settings >= 0 ? settings : order.length;
-  return [...order.slice(0, at), ...rest, ...order.slice(at)];
+  return [...order.slice(0, at), ...added, ...order.slice(at)];
 }
 
 /** The sections that existed before `known` was stored. */
@@ -118,7 +105,7 @@ export async function loadSidebarPrefs(): Promise<SidebarPrefs> {
     const raw = await SecureStore.getItemAsync(KEY);
     if (!raw) return DEFAULT_PREFS;
     const stored = JSON.parse(raw);
-    const prefs = sanitize(stored?.order);
+    const prefs = sanitize(unfoldLibrary(stored?.order));
     return { order: withNewSections(prefs.order, stored?.known) };
   } catch {
     return DEFAULT_PREFS;

@@ -37,7 +37,6 @@ import { useResumeLookup, useWatchProgressRefresh } from "@/lib/watch-progress";
 import { ChannelScreen } from "@/screens/ChannelScreen";
 import { HistoryScreen } from "@/screens/HistoryScreen";
 import { HomeScreen } from "@/screens/HomeScreen";
-import { LibraryScreen } from "@/screens/LibraryScreen";
 import { PlaylistsScreen } from "@/screens/PlaylistsScreen";
 import { QueueScreen } from "@/screens/QueueScreen";
 import { RecommendedScreen } from "@/screens/RecommendedScreen";
@@ -85,7 +84,6 @@ const KEPT_SECTIONS: ReadonlySet<Section> = new Set<Section>([
   "saved",
   "trending",
   "subscriptions",
-  "library",
   "playlists",
   "queue",
   "history",
@@ -363,8 +361,6 @@ export function Shell({
             onSwitchProfile={onSwitchProfile}
           />
         );
-      case "library":
-        return <LibraryScreen nav={nav} />;
       case "playlists":
         return <PlaylistsScreen nav={nav} />;
       case "queue":
