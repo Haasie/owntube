@@ -20,7 +20,14 @@ const ROW_LIMIT = 20;
  * left. Progress decides what belongs here; history.list only supplies the
  * titles, since the progress rows carry none.
  */
-export function ContinueWatchingRow({ nav }: { nav: Nav }) {
+export function ContinueWatchingRow({
+  nav,
+  onCardFocusChange,
+}: {
+  nav: Nav;
+  /** Bubbles card focus so Home can bring the row into view. */
+  onCardFocusChange?: (focused: boolean) => void;
+}) {
   const inProgress = useInProgressIds();
   const { notify } = useCardMenu();
   const refreshProgress = useWatchProgressRefresh();
@@ -75,6 +82,7 @@ export function ContinueWatchingRow({ nav }: { nav: Nav }) {
       title="Continue watching"
       videos={videos}
       menuExtras={menuExtras}
+      onCardFocusChange={onCardFocusChange}
       onSelect={(videoId) =>
         nav.openVideo(videoId, { context: { source: "feed", videos } })
       }

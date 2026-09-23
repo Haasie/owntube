@@ -1,5 +1,7 @@
+import { useCallback, useRef } from "react";
 import {
   ActivityIndicator,
+  type LayoutChangeEvent,
   ScrollView,
   StyleSheet,
   Text,
@@ -35,6 +37,23 @@ export function HomeScreen({ nav }: { nav: Nav }) {
     top.data?.kind === "personalized" && top.data.coldStart !== true;
   const blocks = settings.data?.homeBlocks ?? [];
 
+  /**
+   * Android scrolls a focused card into view by the least it can, which left
+   * the hero sliced through the middle whenever focus sat on the first row.
+   * Instead the focused row is brought to the top of the screen, like the
+   * YouTube and Plex clients do; moving up to the hero scrolls it back in.
+   */
+  const scrollRef = useRef<ScrollView>(null);
+  const rowTops = useRef(new Map<string, number>());
+  const onRowLayout = useCallback((key: string, e: LayoutChangeEvent) => {
+    rowTops.current.set(key, e.nativeEvent.layout.y);
+  }, []);
+  const scrollToRow = useCallback((key: string) => {
+    const top = rowTops.current.get(key);
+    if (top === undefined) return;
+    scrollRef.current?.scrollTo({ y: top - spacing.lg, animated: true });
+  }, []);
+
   if (!heroVideo && (top.isPending || settings.isPending)) {
     return (
       <View style={styles.loading}>
@@ -45,6 +64,7 @@ export function HomeScreen({ nav }: { nav: Nav }) {
 
   return (
     <ScrollView
+      ref={scrollRef}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
@@ -59,9 +79,21 @@ export function HomeScreen({ nav }: { nav: Nav }) {
           }
         />
       ) : null}
-      <ContinueWatchingRow nav={nav} />
+      <View onLayout={(e) => onRowLayout("continue", e)}>
+        <ContinueWatchingRow
+          nav={nav}
+          onCardFocusChange={(focused) => focused && scrollToRow("continue")}
+        />
+      </View>
       {blocks.map((block) => (
-        <HomeBlockRow key={block.id} block={block} region={region} nav={nav} />
+        <View key={block.id} onLayout={(e) => onRowLayout(block.id, e)}>
+          <HomeBlockRow
+            block={block}
+            region={region}
+            nav={nav}
+            onCardFocusChange={(focused) => focused && scrollToRow(block.id)}
+          />
+        </View>
       ))}
       <Text style={styles.hint}>
         Customise these rows on the web: {baseUrl().replace(/^https?:\/\//, "")}

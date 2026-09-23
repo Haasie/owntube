@@ -55,10 +55,13 @@ export function HomeBlockRow({
   block,
   region,
   nav,
+  onCardFocusChange,
 }: {
   block: HomeBlock;
   region: string;
   nav: Nav;
+  /** Bubbles card focus so Home can bring the row into view. */
+  onCardFocusChange?: (focused: boolean) => void;
 }) {
   const progress = useProgressLookup();
   const { type } = block;
@@ -222,6 +225,7 @@ export function HomeBlockRow({
         title={title}
         videos={shown}
         onSelect={playPlaylist}
+        onCardFocusChange={onCardFocusChange}
         disableMenu
       />
     );
@@ -238,6 +242,7 @@ export function HomeBlockRow({
       title={title}
       videos={shown}
       onSelect={(videoId) => nav.openVideo(videoId, { context })}
+      onCardFocusChange={onCardFocusChange}
     />
   );
 }
