@@ -91,6 +91,26 @@ describe("pickAudioTracks", () => {
     // The non-drc row wins within the original group.
     expect(tracks[0]?.xtags).toBe("acont=original:lang=nl-NL");
   });
+
+  it("caps excessive auto-dubs to max 3 tracks prioritizing original, nl and en", () => {
+    const makeDub = (lang: string) => ({
+      ...aacPlain,
+      url: `https://inv.example/videoplayback?itag=140&dur=562.433&xtags=${xt(`acont=dubbed:lang=${lang}`)}`,
+    });
+    const tracks = pickAudioTracks([
+      originalNl,
+      makeDub("ar"),
+      makeDub("de"),
+      makeDub("es"),
+      makeDub("en-US"),
+      makeDub("fr"),
+      makeDub("ja"),
+    ]);
+    expect(tracks.length).toBeLessThanOrEqual(3);
+    expect(tracks[0]?.lang).toBe("nl-NL");
+    expect(tracks[0]?.isDefault).toBe(true);
+    expect(tracks.map((t) => t.lang)).toContain("en-US");
+  });
 });
 
 describe("buildMasterPlaylist", () => {

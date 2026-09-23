@@ -362,7 +362,7 @@ export function pickAudioTracks(af: AdaptiveFormat[]): AudioTrackVariant[] {
     else groups.set(key, [r]);
   }
 
-  const chosen = Array.from(groups.values()).map(
+  let chosen = Array.from(groups.values()).map(
     (g) =>
       g.sort(
         (a, b) =>
@@ -374,6 +374,26 @@ export function pickAudioTracks(af: AdaptiveFormat[]): AudioTrackVariant[] {
     (a, b) =>
       (a.x.acont === "original" ? 0 : 1) - (b.x.acont === "original" ? 0 : 1),
   );
+
+  // Limit HLS audio renditions to avoid overwhelming Apple AVPlayer preroll:
+  // AVPlayer validates and probes every declared audio rendition before starting playback.
+  // When a video has 20-35 auto-translated machine dubs, concurrent byte-range SIDX fetches
+  // exhaust the browser HTTP connection pool and exceed AVPlayer's preroll timeout (~10s),
+  // leaving the player stuck at 0:00.
+  // Keep the original track, plus preferred viewer languages (e.g. Dutch, English) if present,
+  // up to a max of 3 tracks total.
+  if (chosen.length > 3) {
+    const isPriorityLang = (lang?: string | null) => {
+      if (!lang) return false;
+      const code = lang.split(/[-_]/)[0]?.toLowerCase();
+      return code === "nl" || code === "en";
+    };
+    const original = chosen[0];
+    const alternates = chosen.slice(1);
+    const priority = alternates.filter((r) => isPriorityLang(r.x.lang));
+    const nonPriority = alternates.filter((r) => !isPriorityLang(r.x.lang));
+    chosen = [original, ...priority, ...nonPriority].filter((r): r is Row => Boolean(r)).slice(0, 3);
+  }
 
   const hasExplicitOriginal = chosen.some((r) => r.x.acont === "original");
   return chosen.map((r, i) => ({

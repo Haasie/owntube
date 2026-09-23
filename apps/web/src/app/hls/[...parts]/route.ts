@@ -37,6 +37,7 @@ async function handleGET(
 
   try {
     if (file === "master.m3u8") {
+      console.log(`[HLS] GET master.m3u8 videoId=${videoId}`);
       const body = await generateMasterPlaylist(videoId);
       return new Response(body, {
         headers: {
@@ -57,6 +58,7 @@ async function handleGET(
       if (xtags && !/^[\w.:=-]{1,200}$/.test(xtags)) {
         return new Response("invalid xtags", { status: 400 });
       }
+      console.log(`[HLS] GET media.m3u8 videoId=${videoId} itag=${itag} xtags=${xtags ?? "none"}`);
       const body = await generateMediaPlaylist(videoId, itag, xtags);
       return new Response(body, {
         headers: {
@@ -67,6 +69,7 @@ async function handleGET(
     }
     return new Response("not found", { status: 404 });
   } catch (e) {
+    console.error(`[HLS] FAILED videoId=${videoId} file=${file}:`, e);
     return new Response(`hls generation failed: ${(e as Error).message}`, {
       status: 502,
     });
