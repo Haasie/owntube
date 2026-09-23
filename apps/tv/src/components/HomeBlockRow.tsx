@@ -16,7 +16,8 @@ export type HomeBlock =
 /** Videos per row: a TV row scrolls sideways, so rows/size don't apply. */
 const ROW_VIDEOS = 24;
 
-const TITLES: Record<HomeBlock["type"], string> = {
+/** Row headings per block type; a "playlist" block shows its playlist's name. */
+export const HOME_BLOCK_TITLES: Record<HomeBlock["type"], string> = {
   subscriptions: "Subscriptions",
   recommended: "Recommended",
   explore: "Trending",
@@ -56,12 +57,15 @@ export function HomeBlockRow({
   region,
   nav,
   onCardFocusChange,
+  onCardFocus,
 }: {
   block: HomeBlock;
   region: string;
   nav: Nav;
   /** Bubbles card focus so Home can bring the row into view. */
   onCardFocusChange?: (focused: boolean) => void;
+  /** The focused card and this row's title, for Home's spotlight. */
+  onCardFocus?: (video: UnifiedVideo, title: string) => void;
 }) {
   const progress = useProgressLookup();
   const { type } = block;
@@ -194,8 +198,8 @@ export function HomeBlockRow({
   const title =
     type === "playlist"
       ? (playlists.data?.find((p) => p.id === playlistId)?.name ??
-        TITLES.playlist)
-      : TITLES[type];
+        HOME_BLOCK_TITLES.playlist)
+      : HOME_BLOCK_TITLES[type];
 
   if (shown.length === 0) return null;
 
@@ -242,7 +246,10 @@ export function HomeBlockRow({
       title={title}
       videos={shown}
       onSelect={(videoId) => nav.openVideo(videoId, { context })}
-      onCardFocusChange={onCardFocusChange}
+      onCardFocusChange={(focused, video) => {
+        onCardFocusChange?.(focused);
+        if (focused && video) onCardFocus?.(video, title);
+      }}
     />
   );
 }

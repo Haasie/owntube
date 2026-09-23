@@ -122,7 +122,8 @@ export function channelInitial(name: string | undefined): string {
 }
 
 /** An unsigned `/vi/<id>/<still>` path on YouTube's CDN or an Invidious instance. */
-const LARGE_STILL_RE = /^(\/vi\/[^/]+\/)(?:maxres|maxresdefault|hq720)\.jpe?g$/i;
+const LARGE_STILL_RE =
+  /^(\/vi\/[^/]+\/)(?:maxres|maxresdefault|hq720)\.jpe?g$/i;
 
 /**
  * A video's thumbnail for a card, falling back to YouTube's own still by id
@@ -155,25 +156,6 @@ export function videoThumbnailUrl(video: {
   } catch {
     return url;
   }
-}
-
-/**
- * Stills for the full-width hero, sharpest first. The row's own thumbnail is
- * card-sized (blurry at 1080p), so try YouTube's larger stills by id, then
- * fall back to it: `maxresdefault` only exists for HD uploads and `hq720`
- * isn't universal either — both answer 404 when missing.
- */
-export function heroThumbnailUrls(video: {
-  videoId: string;
-  thumbnailUrl?: string;
-}): string[] {
-  const id = encodeURIComponent(video.videoId);
-  const urls = [
-    `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
-    `https://i.ytimg.com/vi/${id}/hq720.jpg`,
-    videoThumbnailUrl(video),
-  ];
-  return urls.filter((url, index) => urls.indexOf(url) === index);
 }
 
 /**
