@@ -1127,9 +1127,18 @@ export function WatchScreen({
     setIsPlaying(true);
   };
 
+  // A rating only changes the icon, so say what it did: it is a taste signal
+  // for the recommender, the same as on the web player.
   const setRatingValue = (next: "like" | "dislike") => {
     const active = rating !== next;
     setRating(active ? next : null);
+    showToast({
+      text: !active
+        ? "Rating removed"
+        : next === "like"
+          ? "Liked — you'll see more like this"
+          : "Disliked — you'll see less like this",
+    });
     trpcClient.interactions.set
       .mutate({ videoId, type: next, active })
       .catch(() => {});
