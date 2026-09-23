@@ -121,16 +121,13 @@ describe("buildMasterPlaylist", () => {
     );
   });
 
-  it("lists one rendition per language with the original as DEFAULT", () => {
+  it("emits the clean single-audio rendition shape even when multiple dubs exist", () => {
     const m3u8 = buildMasterPlaylist(
       [avc720],
       pickAudioTracks([dubEn, originalNlDrc, originalNl]),
     );
     expect(m3u8).toContain(
-      `NAME="Dutch (Original)",LANGUAGE="nl-NL",DEFAULT=YES,AUTOSELECT=YES,URI="media.m3u8?itag=140&xtags=${xt("acont=original:lang=nl-NL")}"`,
-    );
-    expect(m3u8).toContain(
-      `NAME="English",LANGUAGE="en-US",DEFAULT=NO,AUTOSELECT=NO,URI="media.m3u8?itag=140&xtags=${xt("acont=dubbed-auto:lang=en-US")}"`,
+      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES,URI="media.m3u8?itag=140"',
     );
     // Variant rows still reference the shared audio group.
     expect(m3u8).toContain('AUDIO="aud"');

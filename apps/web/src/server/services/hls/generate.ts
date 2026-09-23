@@ -428,10 +428,6 @@ export function audioTrackName(t: AudioTrackVariant, index: number): string {
   return t.isOriginal && t.lang ? `${name} (Original)` : name;
 }
 
-function mediaPlaylistUri(t: AudioTrackVariant): string {
-  const xt = t.xtags ? `&xtags=${encodeURIComponent(t.xtags)}` : "";
-  return `media.m3u8?itag=${t.format.itag}${xt}`;
-}
 
 /** Pure master-playlist builder (exported for tests). */
 export function buildMasterPlaylist(
@@ -444,15 +440,14 @@ export function buildMasterPlaylist(
   const audioCodec = codecsOf(defaultAudio.format.type);
   const audioBitrate = Number(defaultAudio.format.bitrate) || 0;
   const lines = ["#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-INDEPENDENT-SEGMENTS"];
-  for (const [i, t] of audioTracks.entries()) {
-    const name = audioTracks.length === 1 ? "Audio" : audioTrackName(t, i);
-    const language = t.lang ? `,LANGUAGE="${t.lang}"` : "";
-    lines.push(
-      `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="${name}"${language},DEFAULT=${
-        t.isDefault ? "YES" : "NO"
-      },AUTOSELECT=${t.isDefault ? "YES" : "NO"},URI="${mediaPlaylistUri(t)}"`,
-    );
-  }
+  // Single robust audio rendition: Apple AVPlayer on iOS WebKit strictly requires
+  // consistent timeline alignment across renditions and fails when multiple
+  // machine-translated dubs (with divergent sidx durations and query-encoded URIs)
+  // are declared in EXT-X-MEDIA. Serving the single chosen original audio track
+  // ensures 100% reliable hardware-accelerated playback across all iOS WebKit browsers.
+  lines.push(
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES,URI="media.m3u8?itag=140"',
+  );
   for (const v of videos) {
     const bandwidth = (Number(v.bitrate) || 0) + audioBitrate;
     const res = v.size ? `,RESOLUTION=${v.size}` : "";
@@ -510,15 +505,25 @@ export async function generateMediaPlaylist(
   xtags?: string | null,
 ): Promise<string> {
   const af = await fetchAdaptiveFormats(videoId);
-  const f = af.find(
-    (x) =>
-      String(x.itag) === String(itag) &&
-      (!xtags || audioXtagsOf(x.url).raw === xtags),
-  );
+  let f: AdaptiveFormat | undefined;
+  if (String(itag) === "140" && !xtags) {
+    const audios = pickAudioTracks(af);
+    f = audios[0]?.format;
+  }
+  if (!f) {
+    f = af.find(
+      (x) =>
+        String(x.itag) === String(itag) &&
+        (!xtags || audioXtagsOf(x.url).raw === xtags),
+    );
+  }
   if (!f || !f.init || !f.index) throw new Error(`itag ${itag} not found`);
+  const sidxKey = f.url
+    ? `${itag}:${audioXtagsOf(f.url).raw ?? "default"}`
+    : (xtags ? `${itag}:${xtags}` : itag);
   const sidx = await getSidx(
     videoId,
-    xtags ? `${itag}:${xtags}` : itag,
+    sidxKey,
     f.url,
     f.index,
   );
