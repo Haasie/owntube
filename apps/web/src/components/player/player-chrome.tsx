@@ -512,11 +512,15 @@ export function PlayerChrome({
           />
         </div>
       ) : miniMode ? null : (
+        // Never a tap target itself: its gradient padding (pt-12) reaches up
+        // over the center play/skip buttons on a small phone player and
+        // swallowed their taps. Only the scrubber and the control row
+        // capture, and only while the chrome is shown.
         <div
           data-controls
           className={cn(
-            "absolute inset-x-0 bottom-0 z-30 transition-opacity duration-200",
-            chromeShown ? "opacity-100" : "opacity-0 pointer-events-none",
+            "pointer-events-none absolute inset-x-0 bottom-0 z-30 transition-opacity duration-200",
+            chromeShown ? "opacity-100" : "opacity-0",
           )}
           style={{
             background:
@@ -554,7 +558,12 @@ export function PlayerChrome({
             {/* Kept clear of the scrubber's 40px touch strip on every size: phones
                 used to pull this row up 18px into it, so button taps landed
                 on the scrubber. */}
-            <div className="mt-1 flex items-center gap-1.5 text-white sm:gap-2">
+            <div
+              className={cn(
+                "mt-1 flex items-center gap-1.5 text-white sm:gap-2",
+                chromeShown ? "pointer-events-auto" : "pointer-events-none",
+              )}
+            >
               {/* Phones use the big center play/pause overlay instead. */}
               <button
                 type="button"
