@@ -37,6 +37,8 @@ services:
         condition: service_healthy
     networks:
       - cosmos-network
+    labels:
+      - "cosmos-auto-update=true"
 
   invidious:
     container_name: invidious
@@ -144,6 +146,8 @@ services:
       done'
     networks:
       - cosmos-network
+    labels:
+      - "cosmos-auto-update=false"
 
 networks:
   cosmos-network:
