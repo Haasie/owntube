@@ -52,7 +52,7 @@ export function UpNext({
         </Text>
         <View style={styles.body}>
           <Image
-            source={{ uri: thumbnail.uri }}
+            source={thumbnail.uri ? { uri: thumbnail.uri } : undefined}
             style={styles.thumb}
             resizeMethod="resize"
             onError={thumbnail.onError}

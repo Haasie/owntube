@@ -71,7 +71,7 @@ export const VideoCard = memo(function VideoCard({
     >
       <View style={styles.thumbWrap}>
         <Image
-          source={{ uri: thumbnail.uri }}
+          source={thumbnail.uri ? { uri: thumbnail.uri } : undefined}
           onError={thumbnail.onError}
           // Finished videos recede, like the web's watched cards; focus
           // brings one back to full strength.
