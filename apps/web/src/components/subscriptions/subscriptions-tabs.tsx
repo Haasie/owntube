@@ -160,12 +160,13 @@ export function SubscriptionsTabs({ channels }: SubscriptionsTabsProps) {
             );
           })}
         </div>
-        {/* By tag's row size and hide-watched, like the library pages. */}
-        {tab === "byTag" ? (
-          <div className="pb-1.5">
-            <SectionOptionsMenu section="subscriptions" />
-          </div>
-        ) : null}
+        {/* Hide watched (all tabs' videos) and, on By tag, its row size. */}
+        <div className="pb-1.5">
+          <SectionOptionsMenu
+            section="subscriptions"
+            showRowSize={tab === "byTag"}
+          />
+        </div>
       </div>
 
       {tab !== "byTag" ? (
