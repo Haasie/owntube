@@ -144,6 +144,15 @@ export function Shell({
     setVisited((v) => keepRecentSections(v, section));
   }, [section]);
   const [stack, setStack] = useState<Route[]>([]);
+  /**
+   * Per section, bumped when it is chosen again while already showing. Its
+   * layer is keyed on it, so the section mounts afresh: back at the top with
+   * focus on its first item, as the YouTube TV app does. Its data comes from
+   * the query cache, so it doesn't reload.
+   */
+  const [resets, setResets] = useState<Partial<Record<Section, number>>>({});
+  const shownRef = useRef({ section, depth: stack.length });
+  shownRef.current = { section, depth: stack.length };
   const [searchQuery, setSearchQuery] = useState<string | undefined>(undefined);
   /** The short the Shorts section opens at (from a Shorts row), if any. */
   const [shortsStart, setShortsStart] = useState<UnifiedVideo | undefined>(
@@ -230,6 +239,10 @@ export function Shell({
    */
   const selectSection = useCallback(
     (next: Section) => {
+      const shown = shownRef.current;
+      if (next === shown.section && shown.depth === 0) {
+        setResets((r) => ({ ...r, [next]: (r[next] ?? 0) + 1 }));
+      }
       setSection(next);
       setStack([]);
       refreshProgress();
@@ -449,7 +462,7 @@ export function Shell({
                 const visible = key === section && !channelShown;
                 return (
                   <ScreenLayer
-                    key={key}
+                    key={`${key}-${resets[key] ?? 0}`}
                     visible={visible}
                     focused={visible && !watchActive}
                   >
