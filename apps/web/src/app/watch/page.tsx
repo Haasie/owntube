@@ -22,6 +22,7 @@ import { WatchPageGrid } from "@/components/watch/watch-page-grid";
 import { WatchPlayerMount } from "@/components/watch/watch-player-mount";
 import { WatchUpcomingLive } from "@/components/watch/watch-upcoming-live";
 import { WatchVideoUnavailable } from "@/components/watch/watch-video-unavailable";
+import { pickDefaultCaptionIndex } from "@/lib/caption-default";
 import {
   getAppOriginFromRequestHeaders,
   toProxiedOrDirectPlayback,
@@ -252,11 +253,21 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
           : null
       : null;
   // Subtitle tracks → same-origin `/captions/{id}?label=…` (validating, caching
-  // proxy). Both human-authored and auto-generated tracks are included.
+  // proxy). Both human-authored and auto-generated tracks are included. The
+  // start track follows the account's caption language (lib/caption-default).
+  const defaultCaptionIndex = detail?.captions?.length
+    ? pickDefaultCaptionIndex(detail.captions, {
+        preferred: userSettings?.captionLanguage,
+        originalAudioLanguage: detail.audioSources?.find(
+          (a) => a.audioIsOriginal,
+        )?.language,
+      })
+    : -1;
   const videoCaptions = detail?.captions?.length
-    ? detail.captions.map((c) => ({
+    ? detail.captions.map((c, i) => ({
         label: c.label,
         languageCode: c.languageCode,
+        isDefault: i === defaultCaptionIndex,
         src: `${mediaOrigin}/captions/${encodeURIComponent(detail.videoId)}?label=${encodeURIComponent(
           c.label,
         )}`,

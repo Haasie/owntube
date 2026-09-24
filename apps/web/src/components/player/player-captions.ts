@@ -3,9 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CaptionTrack } from "@/components/player/player-payload";
 import {
-  readCaptionLangPref,
   readCaptionsEnabledPref,
-  writeCaptionLangPref,
   writeCaptionsEnabledPref,
 } from "@/lib/player-media-prefs";
 
@@ -196,24 +194,29 @@ export function usePlayerCaptions(
     for (const ev of NATIVE_PRESENTATION_EVENTS) {
       video.addEventListener(ev, sync);
     }
+    document.addEventListener("visibilitychange", sync);
+    // Fallback: don't rely on the presentation events alone — poll the mode
+    // while the page is alive (cheap; a boolean compare every 500 ms).
+    const poll = window.setInterval(() => sync(), 500);
     return () => {
+      window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", sync);
       for (const ev of NATIVE_PRESENTATION_EVENTS) {
         video.removeEventListener(ev, sync);
       }
     };
   }, [videoRef, reactKey]);
 
-  // On a new source, restore the remembered language when it's available.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reactKey re-resolves the remembered track for a new video.
+  // On a new source with captions on, start on the track the server marked
+  // from the account's caption language (lib/caption-default.ts). A pick in
+  // the player only lasts for this video — the setting always wins.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reactKey re-resolves the start track for a new video.
   useEffect(() => {
     if (!readCaptionsEnabledPref()) {
       setActiveIndex(null);
       return;
     }
-    // Enabled: prefer the remembered language, else the first available track,
-    // so "captions on" still shows something on a video lacking that language.
-    const lang = readCaptionLangPref();
-    const idx = lang ? tracks.findIndex((t) => t.languageCode === lang) : -1;
+    const idx = tracks.findIndex((t) => t.isDefault);
     setActiveIndex(idx >= 0 ? idx : tracks.length > 0 ? 0 : null);
   }, [reactKey, tracks]);
 
@@ -287,7 +290,8 @@ export function usePlayerCaptions(
       video.textTracks.removeEventListener?.("addtrack", apply);
       video.textTracks.removeEventListener?.("change", apply);
     };
-  }, [videoRef, tracks, activeIndex, enabled, reactKey]);
+    // nativePresentation: re-apply when the poll (not an event) sees the switch.
+  }, [videoRef, tracks, activeIndex, enabled, reactKey, nativePresentation]);
 
   // Mirror the active track's on-screen cues into `activeText`. Cues load async
   // and swap as playback advances, so we re-read on every `cuechange`.
@@ -390,16 +394,10 @@ export function usePlayerCaptions(
     };
   }, [videoRef, tracks, activeIndex, enabled, reactKey]);
 
-  const setActive = useCallback(
-    (index: number | null) => {
-      setActiveIndex(index);
-      writeCaptionsEnabledPref(index !== null);
-      if (index !== null) {
-        writeCaptionLangPref(tracks[index]?.languageCode ?? null);
-      }
-    },
-    [tracks],
-  );
+  const setActive = useCallback((index: number | null) => {
+    setActiveIndex(index);
+    writeCaptionsEnabledPref(index !== null);
+  }, []);
 
   if (tracks.length === 0) return { kind: "none" };
   return {

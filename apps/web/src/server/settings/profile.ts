@@ -120,6 +120,15 @@ export const appSettingsSchema = z.object({
    * can be turned off to blend regional trending back in.
    */
   personalizedFeedOnly: z.boolean().default(true),
+  /**
+   * Caption language a video starts on when captions are on: "original" (the
+   * video's own language) or a BCP-47 tag, falling back to the original when
+   * a video lacks it. See lib/caption-default.ts.
+   */
+  captionLanguage: z
+    .string()
+    .regex(/^(original|[a-z]{2,3}(-[A-Za-z0-9]{2,8})*)$/)
+    .default("original"),
   /** Show SponsorBlock segment markers on the watch player timeline. */
   sponsorBlockEnabled: z.boolean().default(true),
   /** Automatically skip SponsorBlock segments during playback. */
@@ -219,6 +228,7 @@ const defaultSettings: AppSettings = {
   shortsPreloadNext: true,
   defaultPlaybackQuality: "1080p",
   fullscreenAutoBestQuality: false,
+  captionLanguage: "original",
   blockedRecommendationChannels: [],
   excludeSubscribedFromRecommendations: true,
   personalizedFeedOnly: true,
