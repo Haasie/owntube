@@ -7,8 +7,8 @@ import {
   formatPublishedLabel,
   formatThumbnailBadge,
   formatViews,
-  videoThumbnailUrl,
 } from "@/lib/format";
+import { useThumbnail } from "@/lib/use-thumbnail";
 import { useWatchProgress } from "@/lib/watch-progress";
 import { colors, focus, fontSize, monoFont, radius, spacing } from "@/theme";
 
@@ -52,6 +52,7 @@ export const VideoCard = memo(function VideoCard({
   );
   const metadata = [views, published].filter(Boolean).join(" - ");
   const watched = useWatchProgress(video.videoId);
+  const thumbnail = useThumbnail(video);
 
   return (
     <Pressable
@@ -70,7 +71,8 @@ export const VideoCard = memo(function VideoCard({
     >
       <View style={styles.thumbWrap}>
         <Image
-          source={{ uri: videoThumbnailUrl(video) }}
+          source={{ uri: thumbnail.uri }}
+          onError={thumbnail.onError}
           // Finished videos recede, like the web's watched cards; focus
           // brings one back to full strength.
           style={[

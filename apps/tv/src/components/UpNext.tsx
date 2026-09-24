@@ -2,7 +2,7 @@ import type { UnifiedVideo } from "@web/server/services/proxy.types";
 import { useEffect, useState } from "react";
 import { Image, StyleSheet, Text, View } from "react-native";
 import { FocusButton } from "@/components/FocusButton";
-import { videoThumbnailUrl } from "@/lib/format";
+import { useThumbnail } from "@/lib/use-thumbnail";
 import { colors, fontSize, radius, spacing } from "@/theme";
 
 /** Seconds the card counts down before playing the next video by itself. */
@@ -31,14 +31,7 @@ export function UpNext({
   onCancel,
 }: Props) {
   const [remaining, setRemaining] = useState(UP_NEXT_COUNTDOWN_SECONDS);
-  // A thumbnail URL from the feed can fail (an expired or proxied link); fall
-  // back to YouTube's own stills, as the home hero does.
-  const thumbnails = [
-    videoThumbnailUrl(video),
-    `https://i.ytimg.com/vi/${encodeURIComponent(video.videoId)}/hqdefault.jpg`,
-    `https://i.ytimg.com/vi/${encodeURIComponent(video.videoId)}/mqdefault.jpg`,
-  ].filter((url, i, all) => all.indexOf(url) === i);
-  const [thumbIndex, setThumbIndex] = useState(0);
+  const thumbnail = useThumbnail(video);
 
   useEffect(() => {
     if (!autoplay) return;
@@ -59,12 +52,10 @@ export function UpNext({
         </Text>
         <View style={styles.body}>
           <Image
-            source={{ uri: thumbnails[thumbIndex] }}
+            source={{ uri: thumbnail.uri }}
             style={styles.thumb}
             resizeMethod="resize"
-            onError={() =>
-              setThumbIndex((i) => Math.min(i + 1, thumbnails.length - 1))
-            }
+            onError={thumbnail.onError}
           />
           <View style={styles.copy}>
             <Text style={styles.title} numberOfLines={3}>

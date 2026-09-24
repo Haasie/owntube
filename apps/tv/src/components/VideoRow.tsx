@@ -141,8 +141,13 @@ export const VideoRow = memo(function VideoRow({
         // card just off the viewport edge isn't focusable yet, so the first
         // D-pad press only scrolls it in and a second is needed to select.
         removeClippedSubviews={false}
-        initialNumToRender={8}
-        windowSize={9}
+        // Every mounted card holds its decoded thumbnail (~0.7 MB), and rows
+        // on hidden screens stay mounted. Nine viewports' worth per row ran
+        // Fresco's bitmap pool into its hard cap, after which new thumbnails
+        // failed to load and stayed blank. One viewport either side is still
+        // ahead of the D-pad.
+        initialNumToRender={5}
+        windowSize={3}
         ItemSeparatorComponent={Separator}
         renderItem={renderItem}
         onScrollToIndexFailed={ignore}
