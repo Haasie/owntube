@@ -7,6 +7,7 @@ import {
   SubscriptionTagFilter,
   type TagState,
 } from "@/components/subscriptions/subscription-tag-filter";
+import { SubscriptionTagShelves } from "@/components/subscriptions/subscription-tag-shelves";
 import { SubscriptionVideosInfinite } from "@/components/subscriptions/subscription-videos-infinite";
 import { normalizeChannelTag } from "@/lib/channel-tag";
 import { cn } from "@/lib/utils";
@@ -29,21 +30,28 @@ function readStoredTagStates(): Record<string, TagState> {
   }
 }
 
-type SubscriptionsTab = "videos" | "channels";
+type SubscriptionsTab = "videos" | "byTag" | "channels";
 
 type SubscriptionsTabsProps = {
   channels: Parameters<typeof SubscriptionChannelsList>[0]["channels"];
 };
 
 /**
- * Subscriptions page content: Videos | Channels tabs (channel-page style)
- * with ONE tag filter that applies to both — the feed passes the selection to
- * the server query, the channel list filters rows by tag assignments. Both
- * panels stay mounted so switching tabs never refetches or loses scroll data.
+ * Subscriptions page content: Everything | By tag | Channels tabs
+ * (channel-page style). ONE tag filter applies to Everything and Channels —
+ * the feed passes the selection to the server query, the channel list filters
+ * rows by tag assignments; By tag shows every tag as its own row instead.
+ * Panels stay mounted once shown, so switching tabs never refetches or loses
+ * scroll data.
  */
 export function SubscriptionsTabs({ channels }: SubscriptionsTabsProps) {
   const searchParams = useSearchParams();
   const [tab, setTab] = useState<SubscriptionsTab>("videos");
+  // By tag mounts on first visit (it fetches a feed per tag), then stays.
+  const [byTagShown, setByTagShown] = useState(false);
+  useEffect(() => {
+    if (tab === "byTag") setByTagShown(true);
+  }, [tab]);
 
   // ── Shared tag filter (moved out of the videos feed) ──────────────────────
   const allTagsQuery = trpc.channelTags.listAll.useQuery(undefined, {
@@ -118,7 +126,8 @@ export function SubscriptionsTabs({ channels }: SubscriptionsTabsProps) {
   }, [allTagsQuery.data]);
 
   const tabs: { id: SubscriptionsTab; label: string }[] = [
-    { id: "videos", label: "Videos" },
+    { id: "videos", label: "Everything" },
+    { id: "byTag", label: "By tag" },
     { id: "channels", label: "Channels" },
   ];
 
@@ -152,13 +161,15 @@ export function SubscriptionsTabs({ channels }: SubscriptionsTabsProps) {
         </div>
       </div>
 
-      <SubscriptionTagFilter
-        tags={allTagsQuery.data ?? []}
-        stateFor={(tag) => tagStates[tag] ?? "off"}
-        onCycle={cycleTag}
-        onShowAll={showAllTags}
-        onHideAll={hideAllTags}
-      />
+      {tab !== "byTag" ? (
+        <SubscriptionTagFilter
+          tags={allTagsQuery.data ?? []}
+          stateFor={(tag) => tagStates[tag] ?? "off"}
+          onCycle={cycleTag}
+          onShowAll={showAllTags}
+          onHideAll={hideAllTags}
+        />
+      ) : null}
 
       <div className={cn(tab !== "videos" && "hidden")}>
         <SubscriptionVideosInfinite
@@ -166,6 +177,18 @@ export function SubscriptionsTabs({ channels }: SubscriptionsTabsProps) {
           excludeTags={excludeTags}
         />
       </div>
+      {byTagShown ? (
+        <div className={cn(tab !== "byTag" && "hidden")}>
+          <SubscriptionTagShelves
+            tags={allTagsQuery.data ?? []}
+            onOpenTag={(tag) => {
+              setTagStates({ [tag]: "include" });
+              setTab("videos");
+              window.scrollTo({ top: 0 });
+            }}
+          />
+        </div>
+      ) : null}
       <div className={cn(tab !== "channels" && "hidden")}>
         <SubscriptionChannelsList
           channels={channels}

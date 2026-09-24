@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SubscriptionTagFilter,
   type TagState,
@@ -334,6 +334,27 @@ function SubscriptionsBlockBody({ block }: { block: HomeBlock }) {
       }
     />
   );
+}
+
+/**
+ * One tag's subscription uploads as a scrollable row (Subscriptions > By
+ * tag): a Home subscriptions block filtered to the tag, so cards, actions and
+ * paging behave exactly as there.
+ */
+export function SubscriptionTagShelf({ tag }: { tag: string }) {
+  const block = useMemo<HomeBlock>(
+    () => ({
+      id: `by-tag:${tag}`,
+      type: "subscriptions",
+      limit: 16,
+      rows: 1,
+      layout: "cards",
+      size: "sm",
+      options: { scrollRow: true, [`${TAG_OPTION_PREFIX}${tag}`]: true },
+    }),
+    [tag],
+  );
+  return <SubscriptionsBlockBody block={block} />;
 }
 
 /** The personalized recommendation feed (same source as /recommended). */
