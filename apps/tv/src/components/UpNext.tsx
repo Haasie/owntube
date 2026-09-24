@@ -31,6 +31,14 @@ export function UpNext({
   onCancel,
 }: Props) {
   const [remaining, setRemaining] = useState(UP_NEXT_COUNTDOWN_SECONDS);
+  // A thumbnail URL from the feed can fail (an expired or proxied link); fall
+  // back to YouTube's own stills, as the home hero does.
+  const thumbnails = [
+    videoThumbnailUrl(video),
+    `https://i.ytimg.com/vi/${encodeURIComponent(video.videoId)}/hqdefault.jpg`,
+    `https://i.ytimg.com/vi/${encodeURIComponent(video.videoId)}/mqdefault.jpg`,
+  ].filter((url, i, all) => all.indexOf(url) === i);
+  const [thumbIndex, setThumbIndex] = useState(0);
 
   useEffect(() => {
     if (!autoplay) return;
@@ -51,9 +59,12 @@ export function UpNext({
         </Text>
         <View style={styles.body}>
           <Image
-            source={{ uri: videoThumbnailUrl(video) }}
+            source={{ uri: thumbnails[thumbIndex] }}
             style={styles.thumb}
             resizeMethod="resize"
+            onError={() =>
+              setThumbIndex((i) => Math.min(i + 1, thumbnails.length - 1))
+            }
           />
           <View style={styles.copy}>
             <Text style={styles.title} numberOfLines={3}>
@@ -66,13 +77,9 @@ export function UpNext({
             ) : null}
           </View>
         </View>
+        {/* Both plain: a primary fill would stay red with focus on Cancel. */}
         <View style={styles.buttons}>
-          <FocusButton
-            label="Play now"
-            variant="primary"
-            onPress={onPlay}
-            hasTVPreferredFocus
-          />
+          <FocusButton label="Play now" onPress={onPlay} hasTVPreferredFocus />
           <FocusButton label="Cancel" onPress={onCancel} />
         </View>
       </View>

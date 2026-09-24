@@ -325,14 +325,10 @@ export function WatchScreen({
   const swallowPressRef = useRef(false);
   /** Playback reached the end (and wasn't dismissed since). */
   const [ended, setEnded] = useState(false);
-  /** When the up-next card was last dismissed; see `commitScrubOrToggle`. */
-  const upNextClosedAtRef = useRef(0);
   /** Marked watched from the menu: kept out of Continue watching on leave. */
   const markedWatchedRef = useRef(false);
-  const dismissUpNext = useCallback(() => {
-    upNextClosedAtRef.current = Date.now();
-    setEnded(false);
-  }, []);
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
   /** Bumped by Retry on the error screen to load the video again. */
   const [reloadKey, setReloadKey] = useState(0);
   /** Description and comments beside the picture. */
@@ -845,8 +841,9 @@ export function WatchScreen({
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
       // In the background (under a channel page): Back belongs to the shell.
       if (!activeRef.current) return false;
+      // Declining what's next leaves the finished video too.
       if (showUpNextRef.current) {
-        dismissUpNext();
+        onBackRef.current();
         return true;
       }
       if (!controlsVisibleRef.current) return false;
@@ -855,7 +852,7 @@ export function WatchScreen({
       return true;
     });
     return () => sub.remove();
-  }, [dismissUpNext]);
+  }, []);
 
   // The Android TV home screen's Continue watching row: a video left part
   // way through goes in (opening it resumes via owntube://watch), and one
@@ -1121,10 +1118,6 @@ export function WatchScreen({
       swallowPressRef.current = false;
       return;
     }
-    // The OK that pressed Cancel on the up-next card lands here too once the
-    // card is gone and the scrubber has focus (a real remote's release comes
-    // after the re-render), and would resume the ended video.
-    if (Date.now() - upNextClosedAtRef.current < UP_NEXT_PRESS_GRACE_MS) return;
     const target = scrubRef.current;
     if (target === null) {
       togglePlayback();
@@ -1754,11 +1747,12 @@ export function WatchScreen({
 
       {showUpNext && nextVideo ? (
         <UpNext
+          key={nextVideo.videoId}
           video={nextVideo}
           contextLabel={context?.label}
           autoplay={settingsRef.current.autoplayNext}
           onPlay={playNext}
-          onCancel={dismissUpNext}
+          onCancel={onBack}
         />
       ) : menuOpen ? (
         <MenuPanel buildPage={buildPage} onClose={closeMenu} />
@@ -2103,8 +2097,6 @@ function recordCompleted(
     : trpcClient.subscriptions.markWatched.mutate({ videoId });
   return done.catch(() => {});
 }
-/** How long after the up-next card closes an OK on the scrubber is ignored. */
-const UP_NEXT_PRESS_GRACE_MS = 800;
 
 /** Past this, "previous" restarts the video instead of going back one. */
 const RESTART_THRESHOLD_SECONDS = 5;
