@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   BackHandler,
   findNodeHandle,
   Image,
@@ -1019,6 +1020,24 @@ export function WatchScreen({
     );
     return () => sub.remove();
   }, [player, audioPlayer, revealControls]);
+
+  // Back from another app, or from standby: expo-video paused the player on
+  // the way out, and the activity came back with a new video surface. A
+  // hardware decoder (the KPN box's Amlogic) draws nothing onto it until the
+  // next frame is decoded, so a paused player left a black screen that looked
+  // like the box had switched off. Seeking to where it stands decodes that
+  // frame; the controls come up so it's clear what's on screen.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next !== "active" || !activeRef.current) return;
+      if (!player.playing) {
+        const at = player.currentTime;
+        player.currentTime = at;
+      }
+      revealControls();
+    });
+    return () => sub.remove();
+  }, [player, revealControls]);
 
   // Sent to the background (a channel page opened on top): pause, and close
   // any panel so its own Back handler can't claim presses meant for the page.

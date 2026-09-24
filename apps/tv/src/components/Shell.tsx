@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   Animated,
+  AppState,
   BackHandler,
   Linking,
   type StyleProp,
@@ -72,6 +73,14 @@ type Route =
 
 let routeSequence = 0;
 const nextRouteKey = () => `route-${++routeSequence}`;
+
+/**
+ * Away from the app longer than this (another app, or the TV switched off),
+ * a player left on top is closed on return: coming back to a paused video
+ * nobody remembers is less useful than the screen it was opened from, and
+ * Continue watching still resumes it.
+ */
+const AWAY_CLOSES_PLAYER_MS = 60_000;
 
 /**
  * Sections kept mounted once visited. Shorts plays video and Settings grabs
@@ -225,6 +234,25 @@ export function Shell({
     [nav, replaceVideo],
   );
   useTvRemoteReceiver(playFromOutside);
+
+  // Registered once; reads the stack's top through topRef.
+  const popRef = useRef(pop);
+  popRef.current = pop;
+  useEffect(() => {
+    let leftAt: number | null = null;
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "background") {
+        leftAt ??= Date.now();
+      } else if (state === "active") {
+        const away = leftAt === null ? 0 : Date.now() - leftAt;
+        leftAt = null;
+        if (away > AWAY_CLOSES_PLAYER_MS && topRef.current?.name === "watch") {
+          popRef.current();
+        }
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   /**
    * Deep links: owntube:// URLs (the Android TV home screen's Watch Next row,
