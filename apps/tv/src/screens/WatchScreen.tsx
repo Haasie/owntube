@@ -70,6 +70,7 @@ import {
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
 import { colors, focus, fontSize, monoFont, radius, spacing } from "@/theme";
+import { raiseSubtitles } from "../../modules/player-subtitles";
 import { removeWatchNext, upsertWatchNext } from "../../modules/watch-next";
 
 // Used only when settings fail to load; mirrors the web's
@@ -939,6 +940,7 @@ export function WatchScreen({
     const sub = player.addListener("statusChange", ({ status }) => {
       setIsBuffering(status === "loading");
       if (status === "readyToPlay") {
+        raiseSubtitles();
         setDuration(player.duration);
         applySubtitleTracksRef.current(player.availableSubtitleTracks);
         setSubtitleTrack(player.subtitleTrack);
@@ -970,6 +972,7 @@ export function WatchScreen({
     const selected = player.addListener(
       "subtitleTrackChange",
       ({ subtitleTrack }) => {
+        if (subtitleTrack) raiseSubtitles();
         setSubtitleTrack(subtitleTrack);
       },
     );
