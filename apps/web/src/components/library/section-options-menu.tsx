@@ -11,7 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { trpc } from "@/trpc/react";
 
-export type LibrarySection = "history" | "queue" | "saved";
+export type LibrarySection = "history" | "queue" | "saved" | "subscriptions";
 
 const DEFAULT_PREFS = { hideCompleted: false, rowSize: "md" as HomeBlockSize };
 
@@ -25,8 +25,8 @@ export function useSectionPagePrefs(section: LibrarySection): {
 }
 
 /**
- * Library-page options behind a ⋯ menu (History / Queue / Saved): row size
- * (XS–XL) and the hide-watched filter. Values live in the shared
+ * Library-page options behind a ⋯ menu (History / Queue / Saved, and
+ * Subscriptions > By tag): row size (XS–XL) and the hide-watched filter. Values live in the shared
  * sectionPrefs base, one entry per page.
  */
 export function SectionOptionsMenu({ section }: { section: LibrarySection }) {
@@ -59,6 +59,7 @@ export function SectionOptionsMenu({ section }: { section: LibrarySection }) {
     history: DEFAULT_PREFS,
     queue: DEFAULT_PREFS,
     saved: DEFAULT_PREFS,
+    subscriptions: DEFAULT_PREFS,
   };
   const current = prefs[section] ?? DEFAULT_PREFS;
 
@@ -116,8 +117,9 @@ export function SectionOptionsMenu({ section }: { section: LibrarySection }) {
             />
             Hide watched videos
           </label>
-          {/* History has no companion feed; Queue and Saved publish as fixed slugs. */}
-          {section !== "history"
+          {/* History has no companion feed; Queue and Saved publish as fixed
+              slugs (Subscriptions has its own Copy RSS URL button). */}
+          {section === "queue" || section === "saved"
             ? (["audio", "video"] as const).map((variant) => (
                 <button
                   key={variant}

@@ -34,6 +34,7 @@ import {
   HOME_BLOCK_SIZE_LABEL,
   HOME_BLOCK_SIZES,
   type HomeBlock,
+  type HomeBlockSize,
   type HomeBlockType,
   homeBlockHref,
   homeBlockOption,
@@ -292,7 +293,14 @@ function useHideFinished(block: HomeBlock, videos: BlockVideo[]): BlockVideo[] {
   });
 }
 
-function SubscriptionsBlockBody({ block }: { block: HomeBlock }) {
+function SubscriptionsBlockBody({
+  block,
+  pageSize,
+}: {
+  block: HomeBlock;
+  /** Videos per fetch; defaults to what the block shows (over-fetched). */
+  pageSize?: number;
+}) {
   const { includeTags, excludeTags } = blockTagLists(block);
   const hideIgnored = homeBlockOption(block, "hideIgnored");
   // Server-fetched pages already exclude ignored videos; this also drops the
@@ -304,7 +312,7 @@ function SubscriptionsBlockBody({ block }: { block: HomeBlock }) {
   // shelf can keep pulling pages.
   const query = trpc.subscriptions.mergedFeedInfinite.useInfiniteQuery(
     {
-      limit: Math.min(48, Math.max(8, blockFetchCount(block) * 2)),
+      limit: pageSize ?? Math.min(48, Math.max(8, blockFetchCount(block) * 2)),
       includeTags,
       excludeTags,
       hideShorts: homeBlockOption(block, "hideShorts"),
@@ -339,9 +347,18 @@ function SubscriptionsBlockBody({ block }: { block: HomeBlock }) {
 /**
  * One tag's subscription uploads as a scrollable row (Subscriptions > By
  * tag): a Home subscriptions block filtered to the tag, so cards, actions and
- * paging behave exactly as there.
+ * paging behave exactly as there. It fetches a screenful at a time; the row's
+ * end sentinel pulls the next page as it is scrolled sideways.
  */
-export function SubscriptionTagShelf({ tag }: { tag: string }) {
+export function SubscriptionTagShelf({
+  tag,
+  size,
+  hideWatched,
+}: {
+  tag: string;
+  size: HomeBlockSize;
+  hideWatched: boolean;
+}) {
   const block = useMemo<HomeBlock>(
     () => ({
       id: `by-tag:${tag}`,
@@ -349,13 +366,23 @@ export function SubscriptionTagShelf({ tag }: { tag: string }) {
       limit: 16,
       rows: 1,
       layout: "cards",
-      size: "sm",
-      options: { scrollRow: true, [`${TAG_OPTION_PREFIX}${tag}`]: true },
+      size,
+      options: {
+        scrollRow: true,
+        hideFinished: hideWatched,
+        [`${TAG_OPTION_PREFIX}${tag}`]: true,
+      },
     }),
-    [tag],
+    [tag, size, hideWatched],
   );
-  return <SubscriptionsBlockBody block={block} />;
+  return <SubscriptionsBlockBody block={block} pageSize={TAG_SHELF_PAGE} />;
 }
+
+/**
+ * Videos per By-tag row fetch: a phone shows ~1.5 cards, a desktop ~5, so a
+ * dozen covers the first screen with room to swipe before the next page.
+ */
+const TAG_SHELF_PAGE = 12;
 
 /** The personalized recommendation feed (same source as /recommended). */
 function RecommendedBlockBody({ block }: { block: HomeBlock }) {

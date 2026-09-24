@@ -196,11 +196,14 @@ export const appSettingsSchema = z.object({
       history: sectionPagePrefsSchema,
       queue: sectionPagePrefsSchema,
       saved: sectionPagePrefsSchema,
+      /** Subscriptions > By tag. Defaults in, for profiles saved before it. */
+      subscriptions: sectionPagePrefsSchema,
     })
     .default({
       history: DEFAULT_SECTION_PAGE_PREFS,
       queue: DEFAULT_SECTION_PAGE_PREFS,
       saved: DEFAULT_SECTION_PAGE_PREFS,
+      subscriptions: DEFAULT_SECTION_PAGE_PREFS,
     }),
 });
 
@@ -247,6 +250,7 @@ const defaultSettings: AppSettings = {
     history: DEFAULT_SECTION_PAGE_PREFS,
     queue: DEFAULT_SECTION_PAGE_PREFS,
     saved: DEFAULT_SECTION_PAGE_PREFS,
+    subscriptions: DEFAULT_SECTION_PAGE_PREFS,
   },
 };
 

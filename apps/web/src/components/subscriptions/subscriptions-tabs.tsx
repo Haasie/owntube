@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { SectionOptionsMenu } from "@/components/library/section-options-menu";
 import { SubscriptionChannelsList } from "@/components/subscriptions/subscription-channels-list";
 import {
   SubscriptionTagFilter,
@@ -159,6 +160,12 @@ export function SubscriptionsTabs({ channels }: SubscriptionsTabsProps) {
             );
           })}
         </div>
+        {/* By tag's row size and hide-watched, like the library pages. */}
+        {tab === "byTag" ? (
+          <div className="pb-1.5">
+            <SectionOptionsMenu section="subscriptions" />
+          </div>
+        ) : null}
       </div>
 
       {tab !== "byTag" ? (
