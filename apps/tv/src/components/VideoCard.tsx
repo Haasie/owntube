@@ -7,6 +7,7 @@ import {
   formatPublishedLabel,
   formatThumbnailBadge,
   formatViews,
+  sizedAvatarUrl,
 } from "@/lib/format";
 import { useThumbnail } from "@/lib/use-thumbnail";
 import { useWatchProgress } from "@/lib/watch-progress";
@@ -151,6 +152,8 @@ export const VideoCard = memo(function VideoCard({
   );
 });
 
+const CHANNEL_AVATAR_SIZE = 32;
+
 function ChannelAvatar({
   imageUrl,
   channelName,
@@ -161,7 +164,7 @@ function ChannelAvatar({
   if (imageUrl) {
     return (
       <Image
-        source={{ uri: imageUrl }}
+        source={{ uri: sizedAvatarUrl(imageUrl, CHANNEL_AVATAR_SIZE) }}
         style={styles.avatar}
         resizeMethod="resize"
       />
@@ -256,9 +259,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: CHANNEL_AVATAR_SIZE,
+    height: CHANNEL_AVATAR_SIZE,
+    borderRadius: CHANNEL_AVATAR_SIZE / 2,
     backgroundColor: colors.avatarFallback,
   },
   avatarFallback: {

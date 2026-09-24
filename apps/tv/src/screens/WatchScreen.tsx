@@ -48,7 +48,12 @@ import {
 import { getToken } from "@/lib/auth-token";
 import { baseUrl } from "@/lib/config";
 import { errorMessage } from "@/lib/error-message";
-import { channelInitial, formatTime, formatViews } from "@/lib/format";
+import {
+  channelInitial,
+  formatTime,
+  formatViews,
+  sizedAvatarUrl,
+} from "@/lib/format";
 import {
   contextNeighbours,
   type OpenVideoOptions,
@@ -1920,7 +1925,9 @@ export function WatchScreen({
                   >
                     {detail.channelAvatarUrl ? (
                       <Image
-                        source={{ uri: detail.channelAvatarUrl }}
+                        source={{
+                          uri: sizedAvatarUrl(detail.channelAvatarUrl, AVATAR),
+                        }}
                         style={styles.avatar}
                       />
                     ) : (

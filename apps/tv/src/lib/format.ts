@@ -1,3 +1,5 @@
+import { PixelRatio } from "react-native";
+
 /** mm:ss / h:mm:ss for durations and playback time. */
 export function formatTime(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -198,4 +200,20 @@ export function htmlToPlainText(html: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&");
+}
+
+/**
+ * A channel avatar URL asking for the size it is drawn at. Feeds hand out
+ * Google's 512px avatars (`…=s512-c-k-…`) for circles of 28-96dp; decoded
+ * that is 1 MB each, and Subscriptions keeps an avatar per subscribed channel
+ * attached. With 177 channels the textures overran the GPU cache and every
+ * frame re-uploaded them: 200+ ms frames on a KPN box. Google serves any
+ * `=sN`, so ask for the drawn size in pixels. Other URLs pass through.
+ */
+export function sizedAvatarUrl(url: string, sizeDp: number): string {
+  const px = Math.ceil(sizeDp * PixelRatio.get());
+  return url.replace(
+    /^(https:\/\/(?:yt\d\.)?(?:googleusercontent|ggpht)\.com\/[^=?#]+)=s\d+/,
+    `$1=s${px}`,
+  );
 }

@@ -14,7 +14,7 @@ import { CarouselFeed } from "@/components/CarouselFeed";
 import { MenuPanel } from "@/components/MenuPanel";
 import { TagShelves } from "@/components/TagShelves";
 import { errorMessage } from "@/lib/error-message";
-import { channelInitial } from "@/lib/format";
+import { channelInitial, sizedAvatarUrl } from "@/lib/format";
 import { setLongPressTarget, takeSuppressedPress } from "@/lib/long-press";
 import type { Nav } from "@/lib/navigation";
 import { queryClient } from "@/lib/query-client";
@@ -417,7 +417,10 @@ function ChannelRow({
           <Feather name={icon} size={16} color={tint} />
         </View>
       ) : avatarUrl ? (
-        <Image source={{ uri: avatarUrl }} style={styles.avatar} />
+        <Image
+          source={{ uri: sizedAvatarUrl(avatarUrl, AVATAR_SIZE) }}
+          style={styles.avatar}
+        />
       ) : (
         <View style={[styles.avatar, styles.avatarFallback]}>
           <Text style={styles.avatarInitial}>{channelInitial(label)}</Text>

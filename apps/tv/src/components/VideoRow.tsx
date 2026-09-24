@@ -5,6 +5,7 @@ import {
   type ListRenderItem,
   StyleSheet,
   Text,
+  TVFocusGuideView,
   View,
 } from "react-native";
 import { type CardMenuExtras, useCardMenu } from "@/components/CardMenu";
@@ -127,32 +128,37 @@ export const VideoRow = memo(function VideoRow({
   return (
     <View style={styles.row}>
       {title ? <Text style={styles.heading}>{title}</Text> : null}
-      <FlatList
-        ref={listRef}
-        onLayout={(e) => {
-          listWidthRef.current = e.nativeEvent.layout.width;
-        }}
-        horizontal
-        data={videos}
-        keyExtractor={keyExtractor}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.listContent}
-        // TV focus can only land on an attached view. With clipping on, the
-        // card just off the viewport edge isn't focusable yet, so the first
-        // D-pad press only scrolls it in and a second is needed to select.
-        removeClippedSubviews={false}
-        // Every mounted card holds its decoded thumbnail (~0.7 MB), and rows
-        // on hidden screens stay mounted. Nine viewports' worth per row ran
-        // Fresco's bitmap pool into its hard cap, after which new thumbnails
-        // failed to load and stayed blank. One viewport either side is still
-        // ahead of the D-pad.
-        initialNumToRender={5}
-        windowSize={3}
-        ItemSeparatorComponent={Separator}
-        renderItem={renderItem}
-        onScrollToIndexFailed={ignore}
-        getItemLayout={getItemLayout}
-      />
+      {/* Right at the row's last card stays put. Android otherwise hands
+          focus to the nearest card in some other row, so a short row sent
+          focus jumping rows up or down. */}
+      <TVFocusGuideView trapFocusRight>
+        <FlatList
+          ref={listRef}
+          onLayout={(e) => {
+            listWidthRef.current = e.nativeEvent.layout.width;
+          }}
+          horizontal
+          data={videos}
+          keyExtractor={keyExtractor}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.listContent}
+          // TV focus can only land on an attached view. With clipping on, the
+          // card just off the viewport edge isn't focusable yet, so the first
+          // D-pad press only scrolls it in and a second is needed to select.
+          removeClippedSubviews={false}
+          // Every mounted card holds its decoded thumbnail (~0.7 MB), and rows
+          // on hidden screens stay mounted. Nine viewports' worth per row ran
+          // Fresco's bitmap pool into its hard cap, after which new thumbnails
+          // failed to load and stayed blank. One viewport either side is still
+          // ahead of the D-pad.
+          initialNumToRender={5}
+          windowSize={3}
+          ItemSeparatorComponent={Separator}
+          renderItem={renderItem}
+          onScrollToIndexFailed={ignore}
+          getItemLayout={getItemLayout}
+        />
+      </TVFocusGuideView>
     </View>
   );
 });
