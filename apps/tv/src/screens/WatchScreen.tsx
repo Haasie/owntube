@@ -323,6 +323,8 @@ export function WatchScreen({
   const [ended, setEnded] = useState(false);
   /** When the up-next card was last dismissed; see `commitScrubOrToggle`. */
   const upNextClosedAtRef = useRef(0);
+  /** Marked watched from the menu: kept out of Continue watching on leave. */
+  const markedWatchedRef = useRef(false);
   const dismissUpNext = useCallback(() => {
     upNextClosedAtRef.current = Date.now();
     setEnded(false);
@@ -858,6 +860,10 @@ export function WatchScreen({
     () => () => {
       const detail = detailRef.current;
       if (!detail || detail.isLive) return;
+      if (markedWatchedRef.current) {
+        removeWatchNext(detail.videoId);
+        return;
+      }
       const duration = detail.durationSeconds ?? 0;
       const position = currentTimeRef.current;
       if (duration <= 0) return;
@@ -900,24 +906,7 @@ export function WatchScreen({
       if (total > 0 && currentTimeRef.current < total - END_TOLERANCE_SECONDS) {
         return;
       }
-      const detail = detailRef.current;
-      if (detail?.channelId) {
-        trpcClient.history.upsertEvent
-          .mutate({
-            videoId: detail.videoId,
-            channelId: detail.channelId,
-            // The server keeps the larger of this and the recorded play time;
-            // what matters here is `completed`, which also dequeues it.
-            durationWatched: 0,
-            positionSeconds: Math.floor(currentTimeRef.current),
-            completed: true,
-            videoDurationSeconds: detail.durationSeconds,
-            videoTitle: detail.title,
-            channelName: detail.channelName,
-          })
-          .catch(() => {});
-      }
-      removeWatchNext(videoId);
+      recordCompleted(videoId, detailRef.current, currentTimeRef.current);
       setEnded(true);
     });
     return () => sub.remove();
@@ -1395,18 +1384,34 @@ export function WatchScreen({
   const actOnToastRef = useRef(actOnToast);
   actOnToastRef.current = actOnToast;
 
+  /**
+   * Marking the playing video watched finishes it, as reaching the end would:
+   * recorded as completed (which also dequeues it), then the up-next card, or
+   * back out when nothing follows.
+   */
   const markWatched = () => {
     const detail = detailRef.current;
     if (!detail) return;
-    trpcClient.subscriptions.markWatched
-      .mutate({ videoId, channelId: detail.channelId ?? undefined })
-      .then(() => {
-        showToast({ text: "Marked as watched" });
-        void queryClient.invalidateQueries({
-          queryKey: [["history", "progressAll"]],
-        });
-      })
-      .catch(() => showToast({ text: "Couldn't mark as watched" }));
+    markedWatchedRef.current = true;
+    player.pause();
+    audioPlayer.pause();
+    setIsPlaying(false);
+    const done = recordCompleted(
+      videoId,
+      detail,
+      detail.durationSeconds || currentTimeRef.current,
+    );
+    void done.then(() =>
+      queryClient.invalidateQueries({
+        queryKey: [["history", "progressAll"]],
+      }),
+    );
+    if (nextVideo) {
+      setEnded(true);
+      showToast({ text: "Marked as watched" });
+    } else {
+      onBack();
+    }
   };
 
   useEffect(
@@ -2058,6 +2063,35 @@ const WATCH_NEXT_DONE_FRACTION = 0.95;
 const RESUME_END_GUARD_SECONDS = 15;
 /** How close playback must have got for an announced end to be a real one. */
 const END_TOLERANCE_SECONDS = 5;
+
+/**
+ * Records a video as watched to the end: completed in history (the server
+ * also drops it from the queue then) and out of the Android TV home screen's
+ * Continue watching row.
+ */
+function recordCompleted(
+  videoId: string,
+  detail: VideoDetail | null,
+  positionSeconds: number,
+): Promise<unknown> {
+  removeWatchNext(videoId);
+  if (!detail) return Promise.resolve();
+  const done = detail.channelId
+    ? trpcClient.history.upsertEvent.mutate({
+        videoId: detail.videoId,
+        channelId: detail.channelId,
+        // The server keeps the larger of this and the recorded play time;
+        // what matters here is `completed`.
+        durationWatched: 0,
+        positionSeconds: Math.floor(positionSeconds),
+        completed: true,
+        videoDurationSeconds: detail.durationSeconds,
+        videoTitle: detail.title,
+        channelName: detail.channelName,
+      })
+    : trpcClient.subscriptions.markWatched.mutate({ videoId });
+  return done.catch(() => {});
+}
 /** How long after the up-next card closes an OK on the scrubber is ignored. */
 const UP_NEXT_PRESS_GRACE_MS = 800;
 
