@@ -321,6 +321,12 @@ export function WatchScreen({
   const swallowPressRef = useRef(false);
   /** Playback reached the end (and wasn't dismissed since). */
   const [ended, setEnded] = useState(false);
+  /** When the up-next card was last dismissed; see `commitScrubOrToggle`. */
+  const upNextClosedAtRef = useRef(0);
+  const dismissUpNext = useCallback(() => {
+    upNextClosedAtRef.current = Date.now();
+    setEnded(false);
+  }, []);
   /** Bumped by Retry on the error screen to load the video again. */
   const [reloadKey, setReloadKey] = useState(0);
   /** Description and comments beside the picture. */
@@ -834,7 +840,7 @@ export function WatchScreen({
       // In the background (under a channel page): Back belongs to the shell.
       if (!activeRef.current) return false;
       if (showUpNextRef.current) {
-        setEnded(false);
+        dismissUpNext();
         return true;
       }
       if (!controlsVisibleRef.current) return false;
@@ -843,7 +849,7 @@ export function WatchScreen({
       return true;
     });
     return () => sub.remove();
-  }, []);
+  }, [dismissUpNext]);
 
   // The Android TV home screen's Continue watching row: a video left part
   // way through goes in (opening it resumes via owntube://watch), and one
@@ -1062,6 +1068,15 @@ export function WatchScreen({
       audioPlayer.pause();
       setIsPlaying(false);
     } else {
+      // Play at the very end replays from the start. Playing on from there
+      // would only end again at once and bring the up-next card straight back.
+      const total = detailRef.current?.durationSeconds || player.duration || 0;
+      if (total > 0 && currentTimeRef.current >= total - 1) {
+        player.currentTime = 0;
+        if (selectedOptionRef.current?.kind === "split") {
+          audioPlayer.currentTime = 0;
+        }
+      }
       player.play();
       if (selectedOptionRef.current?.kind === "split") audioPlayer.play();
       setIsPlaying(true);
@@ -1111,6 +1126,10 @@ export function WatchScreen({
       swallowPressRef.current = false;
       return;
     }
+    // The OK that pressed Cancel on the up-next card lands here too once the
+    // card is gone and the scrubber has focus (a real remote's release comes
+    // after the re-render), and would resume the ended video.
+    if (Date.now() - upNextClosedAtRef.current < UP_NEXT_PRESS_GRACE_MS) return;
     const target = scrubRef.current;
     if (target === null) {
       togglePlayback();
@@ -1723,7 +1742,7 @@ export function WatchScreen({
           contextLabel={context?.label}
           autoplay={settingsRef.current.autoplayNext}
           onPlay={playNext}
-          onCancel={() => setEnded(false)}
+          onCancel={dismissUpNext}
         />
       ) : menuOpen ? (
         <MenuPanel buildPage={buildPage} onClose={closeMenu} />
@@ -2039,6 +2058,8 @@ const WATCH_NEXT_DONE_FRACTION = 0.95;
 const RESUME_END_GUARD_SECONDS = 15;
 /** How close playback must have got for an announced end to be a real one. */
 const END_TOLERANCE_SECONDS = 5;
+/** How long after the up-next card closes an OK on the scrubber is ignored. */
+const UP_NEXT_PRESS_GRACE_MS = 800;
 
 /** Past this, "previous" restarts the video instead of going back one. */
 const RESTART_THRESHOLD_SECONDS = 5;
