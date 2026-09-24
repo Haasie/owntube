@@ -460,10 +460,15 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-[hsl(var(--border))] pb-4">
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                  {/* Basis 18rem: the row wraps the action buttons onto their
+                      own line before the channel block is squeezed — on phones
+                      it used to shrink the name to nothing and push Subscribe
+                      over the subscriber count and the buttons. */}
+                  <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-3">
                     {detail?.channelId ? (
                       <Link
                         href={`/channel/${encodeURIComponent(detail.channelId)}`}
+                        className="shrink-0"
                       >
                         <ChannelAvatarCircle
                           imageUrl={detail.channelAvatarUrl}
@@ -482,16 +487,16 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
                       {detail?.channelId ? (
                         <Link
                           href={`/channel/${encodeURIComponent(detail.channelId)}`}
-                          className="line-clamp-1 text-sm font-semibold text-[hsl(var(--foreground))] hover:underline"
+                          className="block truncate text-sm font-semibold text-[hsl(var(--foreground))] hover:underline"
                         >
                           {channelLabel}
                         </Link>
                       ) : (
-                        <p className="line-clamp-1 text-sm font-semibold text-[hsl(var(--foreground))]">
+                        <p className="truncate text-sm font-semibold text-[hsl(var(--foreground))]">
                           {channelLabel}
                         </p>
                       )}
-                      <p className="text-xs text-[hsl(var(--muted-foreground))]">
+                      <p className="truncate text-xs text-[hsl(var(--muted-foreground))]">
                         {subscribersLabel ?? "Channel"}
                       </p>
                       {detail?.channelId ? (
