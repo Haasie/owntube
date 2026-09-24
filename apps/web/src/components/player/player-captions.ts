@@ -189,7 +189,21 @@ export function usePlayerCaptions(
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const sync = () => setNativePresentation(isInNativePresentation(video));
+    const sync = () => {
+      setNativePresentation(isInNativePresentation(video));
+      // iOS draws the `showing` mirror cue twice in PiP: in the PiP window
+      // and on the inline element, under its "playing in picture in picture"
+      // placeholder. Fade the inline element out (globals.css) — opacity on
+      // the <video>, not visibility/display on the cue container, because
+      // WebKit snapshots that container for the PiP captions.
+      const pip =
+        (video as HTMLVideoElement & { webkitPresentationMode?: string })
+          .webkitPresentationMode === "picture-in-picture" ||
+        document.pictureInPictureElement === video;
+      if (video.hasAttribute("data-native-pip") !== pip) {
+        video.toggleAttribute("data-native-pip", pip);
+      }
+    };
     sync();
     for (const ev of NATIVE_PRESENTATION_EVENTS) {
       video.addEventListener(ev, sync);

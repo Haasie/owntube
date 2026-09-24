@@ -260,6 +260,14 @@ export function PlayerChrome({
 
       <CaptionOverlay text={captionText} raised={chromeShown} />
 
+      {/* Stands in for WebKit's "playing in picture in picture" placeholder,
+          which fades out with the inline <video> while it's in native PiP
+          (see player-captions.ts). Shown by CSS off `data-native-pip`. */}
+      <div className="ot-pip-placeholder" aria-hidden>
+        <PipIcon className="h-10 w-10" />
+        <span>Playing in Picture in Picture</span>
+      </div>
+
       {/* On-video scrub preview: while actively dragging the scrubber, the frame
           fills the whole video area (YouTube-style) with the target time floated
           above the scrubber. The small timeline preview shows at the same time. */}
@@ -543,7 +551,10 @@ export function PlayerChrome({
                 adapter.seek(t);
               }}
             />
-            <div className="mt-[-18px] flex items-center gap-1.5 text-white sm:mt-1 sm:gap-2">
+            {/* Kept clear of the scrubber's 40px touch strip on every size: phones
+                used to pull this row up 18px into it, so button taps landed
+                on the scrubber. */}
+            <div className="mt-1 flex items-center gap-1.5 text-white sm:gap-2">
               {/* Phones use the big center play/pause overlay instead. */}
               <button
                 type="button"

@@ -736,6 +736,40 @@ body {
    a plain CSS edit. NOTE: Turbopack doesn't reliably re-scan this file
    mid-session — both adding a *new* selector and editing an existing value
    below often need a dev-server restart to actually take effect. */
+/* In native PiP the inline <video> only shows a placeholder, and iOS paints
+   the PiP caption there too — fade it out (see player-captions.ts) and show
+   our own placeholder instead. */
+video[data-native-pip] {
+  opacity: 0;
+}
+
+.ot-pip-placeholder {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5;
+  /* Grid centering on both axes; each child is centered in its own row. */
+  place-content: center;
+  justify-items: center;
+  row-gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  color: rgb(255 255 255 / 0.7);
+  font-size: 0.875rem;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.group\/player:has(video[data-native-pip]) .ot-pip-placeholder {
+  display: grid;
+}
+
 .ot-caption {
   pointer-events: none;
   -webkit-user-select: none;
