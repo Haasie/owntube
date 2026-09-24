@@ -70,7 +70,8 @@
       "expo-speech-recognition",
       "./plugins/with-tv-search",
       "./plugins/with-media-keys",
-      "./plugins/with-release-signing"
+      "./plugins/with-release-signing",
+      "./plugins/with-image-memory"
     ],
     "extra": {
       "owntubeUrl": "http://10.0.2.2:3000"

@@ -1,5 +1,13 @@
 import { useState } from "react";
+import { baseUrl } from "@/lib/config";
 import { videoThumbnailUrl } from "@/lib/format";
+
+/**
+ * Width asked of the server's card thumbnails (`/image/…?w=`): a 16:9 crop,
+ * where YouTube's 480x360 still is 4:3 with black bars the card crops away
+ * but the TV still decodes. Near a 264dp card's 528px at 2x density.
+ */
+const CARD_THUMBNAIL_WIDTH = 480;
 
 /**
  * YouTube's 11-character video ID. Cards also carry playlists, whose "video
@@ -21,6 +29,10 @@ export function useThumbnail(video: {
   const id = encodeURIComponent(video.videoId);
   const isVideo = YOUTUBE_VIDEO_ID.test(video.videoId);
   const candidates = [
+    // The server's cropped still first; the feed's own URL if that fails.
+    ...(isVideo
+      ? [`${baseUrl()}/image/vi/${id}/hqdefault.jpg?w=${CARD_THUMBNAIL_WIDTH}`]
+      : []),
     ...(video.thumbnailUrl || isVideo ? [videoThumbnailUrl(video)] : []),
     ...(isVideo
       ? [
