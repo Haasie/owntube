@@ -1,3 +1,4 @@
+import { type AnonViewer, createAnonViewer } from "@/server/anon-viewer";
 import { auth } from "@/server/auth";
 import { type AppDb, getDb } from "@/server/db/client";
 import { userIdFromDeviceToken } from "@/server/device-token";
@@ -11,10 +12,13 @@ export type TRPCContext = {
    * server render never blocks; a cold miss falls back to the client fetch.
    */
   prefetchCacheOnly?: boolean;
+  /** Signed-out viewer identity (cookie); unused when `userId` is set. */
+  anon?: AnonViewer;
 };
 
 export async function createTRPCContext(opts?: {
   req?: Request;
+  resHeaders?: Headers;
 }): Promise<TRPCContext> {
   const session = await auth();
   const parsedId = session?.user?.id
@@ -29,5 +33,9 @@ export async function createTRPCContext(opts?: {
     if (bearer) userId = await userIdFromDeviceToken(bearer);
   }
 
-  return { db: getDb(), userId };
+  return {
+    db: getDb(),
+    userId,
+    anon: createAnonViewer(opts?.req, opts?.resHeaders),
+  };
 }
