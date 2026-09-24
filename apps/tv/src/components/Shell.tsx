@@ -71,6 +71,31 @@ type Route =
     }
   | { name: "channel"; key: string; channelId: string };
 
+/**
+ * Besides Home, how many of the most recently used sections stay mounted.
+ * Returning to one of them is instant (scroll, focus and loaded pages
+ * intact); an older one mounts afresh. Keeping every section visited let a
+ * long session hold every screen's shelves and pages at once.
+ */
+const KEPT_RECENT_SECTIONS = 4;
+
+/** `visited` after showing `section`: Home, then the most recent, newest last. */
+export function keepRecentSections(
+  visited: readonly Section[],
+  section: Section,
+): Section[] {
+  if (section === "home") return visited as Section[];
+  const others = visited.filter((s) => s !== "home" && s !== section);
+  const next: Section[] = [
+    "home",
+    ...others.slice(-(KEPT_RECENT_SECTIONS - 1)),
+    section,
+  ];
+  const same =
+    next.length === visited.length && next.every((s, i) => s === visited[i]);
+  return same ? (visited as Section[]) : next;
+}
+
 let routeSequence = 0;
 const nextRouteKey = () => `route-${++routeSequence}`;
 
@@ -112,11 +137,11 @@ export function Shell({
   // back to a section doesn't refetch it.
   const me = trpc.auth.me.useQuery(undefined, { retry: 1 });
   const [section, setSection] = useState<Section>("home");
-  /** Kept sections visited so far, in first-visit order. */
+  /** Kept sections still mounted: Home, then the most recently used. */
   const [visited, setVisited] = useState<Section[]>(["home"]);
   useEffect(() => {
     if (!KEPT_SECTIONS.has(section)) return;
-    setVisited((v) => (v.includes(section) ? v : [...v, section]));
+    setVisited((v) => keepRecentSections(v, section));
   }, [section]);
   const [stack, setStack] = useState<Route[]>([]);
   const [searchQuery, setSearchQuery] = useState<string | undefined>(undefined);

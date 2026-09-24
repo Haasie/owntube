@@ -5,7 +5,10 @@ import { useMemo } from "react";
 import { VideoRow } from "@/components/VideoRow";
 import type { Nav, PlayContext } from "@/lib/navigation";
 import { playAllStart } from "@/lib/play-all";
-import { useScreenActive } from "@/lib/screen-active";
+import {
+  useKeptQueryOptions,
+  useRefetchStaleOnShow,
+} from "@/lib/screen-active";
 import { trpcClient } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc-react";
 import { useProgressLookup } from "@/lib/watch-progress";
@@ -69,8 +72,9 @@ export function HomeBlockRow({
 }) {
   const progress = useProgressLookup();
   const { type } = block;
-  // Kept mounted while Home is hidden: stop listening, refetch stale on return.
-  const subscribed = useScreenActive();
+  // Kept mounted while Home is hidden: keeps its data without re-rendering,
+  // and refetches the row's query on return if it went stale.
+  const kept = useKeptQueryOptions();
 
   const subscriptions = trpc.subscriptions.mergedFeedInfinite.useQuery(
     {
@@ -79,15 +83,15 @@ export function HomeBlockRow({
       hideIgnored: option(block, "hideIgnored", true),
       ...tagFilters(block),
     },
-    { enabled: type === "subscriptions", subscribed },
+    { enabled: type === "subscriptions", ...kept },
   );
   const recommended = trpc.feed.home.useQuery(
     { page: 1, pageSize: ROW_VIDEOS, region },
-    { enabled: type === "recommended", subscribed },
+    { enabled: type === "recommended", ...kept },
   );
   const explore = trpc.trending.list.useQuery(
     { region, limit: ROW_VIDEOS },
-    { enabled: type === "explore", subscribed },
+    { enabled: type === "explore", ...kept },
   );
   const history = trpc.history.list.useQuery(
     {
@@ -95,25 +99,39 @@ export function HomeBlockRow({
       pageSize: ROW_VIDEOS,
       hideWatched: option(block, "hideCompleted", false),
     },
-    { enabled: type === "history", subscribed },
+    { enabled: type === "history", ...kept },
   );
   const queue = trpc.queue.listDetailed.useQuery(undefined, {
     enabled: type === "queue",
-    subscribed,
+    ...kept,
   });
   const saved = trpc.interactions.listSaved.useQuery(undefined, {
     enabled: type === "saved",
-    subscribed,
+    ...kept,
   });
   const playlistId = block.playlistId ?? 0;
   const playlistItems = trpc.playlists.itemsDetailed.useQuery(
     { playlistId },
-    { enabled: type === "playlist" && playlistId > 0, subscribed },
+    { enabled: type === "playlist" && playlistId > 0, ...kept },
   );
   const playlists = trpc.playlists.list.useQuery(undefined, {
     enabled: type === "playlists" || type === "playlist",
-    subscribed,
+    ...kept,
   });
+
+  const rowQueries: Partial<
+    Record<HomeBlock["type"], { isStale: boolean; refetch: () => unknown }>
+  > = {
+    subscriptions,
+    recommended,
+    explore,
+    history,
+    queue,
+    saved,
+    playlist: playlistItems,
+    playlists,
+  };
+  useRefetchStaleOnShow(rowQueries[type] ?? NOTHING_TO_REFETCH);
 
   const videos: UnifiedVideo[] = useMemo(() => {
     const libraryRows = (
@@ -253,3 +271,6 @@ export function HomeBlockRow({
     />
   );
 }
+
+/** For a row type without a query of its own here. */
+const NOTHING_TO_REFETCH = { isStale: false, refetch: () => undefined };
