@@ -33,10 +33,6 @@ function readStoredTagStates(): Record<string, TagState> {
 
 type SubscriptionsTab = "videos" | "byTag" | "channels";
 
-type SubscriptionsTabsProps = {
-  channels: Parameters<typeof SubscriptionChannelsList>[0]["channels"];
-};
-
 /**
  * Subscriptions page content: Everything | By tag | Channels tabs
  * (channel-page style). ONE tag filter applies to Everything and Channels —
@@ -45,7 +41,7 @@ type SubscriptionsTabsProps = {
  * Panels stay mounted once shown, so switching tabs never refetches or loses
  * scroll data.
  */
-export function SubscriptionsTabs({ channels }: SubscriptionsTabsProps) {
+export function SubscriptionsTabs() {
   const searchParams = useSearchParams();
   const [tab, setTab] = useState<SubscriptionsTab>("videos");
   // By tag mounts on first visit (it fetches a feed per tag), then stays.
@@ -53,6 +49,22 @@ export function SubscriptionsTabs({ channels }: SubscriptionsTabsProps) {
   useEffect(() => {
     if (tab === "byTag") setByTagShown(true);
   }, [tab]);
+
+  // The Channels tab's list (every subscription with its meta) loads after
+  // Everything has drawn: in the background once the page is idle, or at
+  // once if Channels is opened first.
+  const [channelsWanted, setChannelsWanted] = useState(false);
+  useEffect(() => {
+    if (tab === "channels") setChannelsWanted(true);
+  }, [tab]);
+  useEffect(() => {
+    const timer = setTimeout(() => setChannelsWanted(true), 2000);
+    return () => clearTimeout(timer);
+  }, []);
+  const channelsQuery = trpc.subscriptions.listDetailed.useQuery(undefined, {
+    enabled: channelsWanted,
+    staleTime: 5 * 60_000,
+  });
 
   // ── Shared tag filter (moved out of the videos feed) ──────────────────────
   const allTagsQuery = trpc.channelTags.listAll.useQuery(undefined, {
@@ -198,11 +210,17 @@ export function SubscriptionsTabs({ channels }: SubscriptionsTabsProps) {
         </div>
       ) : null}
       <div className={cn(tab !== "channels" && "hidden")}>
-        <SubscriptionChannelsList
-          channels={channels}
-          includeTags={includeTags}
-          excludeTags={excludeTags}
-        />
+        {channelsQuery.data ? (
+          <SubscriptionChannelsList
+            channels={channelsQuery.data}
+            includeTags={includeTags}
+            excludeTags={excludeTags}
+          />
+        ) : (
+          <p className="py-6 text-sm text-[hsl(var(--muted-foreground))]">
+            Loading channels…
+          </p>
+        )}
       </div>
     </section>
   );
