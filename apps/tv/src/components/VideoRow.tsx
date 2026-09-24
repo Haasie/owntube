@@ -128,10 +128,13 @@ export const VideoRow = memo(function VideoRow({
   return (
     <View style={styles.row}>
       {title ? <Text style={styles.heading}>{title}</Text> : null}
-      {/* Right at the row's last card stays put. Android otherwise hands
-          focus to the nearest card in some other row, so a short row sent
-          focus jumping rows up or down. */}
-      <TVFocusGuideView trapFocusRight>
+      {/* Entering the row (from the hero above, or another row) lands on
+          the card last focused here, else the first: without it Android
+          picks the card nearest the previous focus, so Down from the
+          full-width hero landed on the second card. Right at the row's last
+          card stays put; Android otherwise hands focus to the nearest card
+          in some other row. */}
+      <TVFocusGuideView autoFocus trapFocusRight>
         <FlatList
           ref={listRef}
           onLayout={(e) => {
