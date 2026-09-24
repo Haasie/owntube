@@ -37,6 +37,9 @@ export type PlayerAdapter = {
   canPictureInPicture: boolean;
   pictureInPicture: boolean;
   togglePictureInPicture(): void;
+  canAirPlay?: boolean;
+  airPlayActive?: boolean;
+  showAirPlayPicker?(): void;
 };
 
 export type ChromeProps = SponsorBlockChromeProps & {

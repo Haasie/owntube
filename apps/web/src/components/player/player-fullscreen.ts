@@ -142,21 +142,33 @@ export function useFullscreenShell(
       }
       // Prefer real element fullscreen so OUR chrome — chapters, SponsorBlock,
       // the caption overlay — stays on top. iPad (both UA modes) and every
-      // desktop browser support it. Only iPhone lacks element fullscreen, so it
-      // alone falls through to Apple's native video player below.
-      if (typeof el.requestFullscreen === "function") {
-        await el.requestFullscreen();
-        return;
+      // desktop browser support it. Only iPhone lacks element fullscreen (where
+      // document.fullscreenEnabled is false), so it alone falls through to
+      // Apple's native video player below.
+      const elementFsAllowed =
+        typeof document.fullscreenEnabled === "undefined" ||
+        document.fullscreenEnabled;
+
+      if (typeof el.requestFullscreen === "function" && elementFsAllowed) {
+        try {
+          await el.requestFullscreen();
+          return;
+        } catch {
+          // Standard request rejected/denied (e.g. mobile WebKit). Fall through to native video fullscreen.
+        }
       }
-      // iPhone: no element fullscreen — hand off to Apple's real fullscreen
-      // player. JS still drives the element, so SponsorBlock skips keep working;
-      // captions switch to native `showing` cues via usePlayerCaptions.
+      // iPhone / AirPlay: hand off to Apple's real fullscreen player.
+      // AVPlayer streams full 16:9 to Apple TV when AirPlay is engaged.
       if (
         typeof video?.webkitEnterFullscreen === "function" &&
         video.webkitSupportsFullscreen !== false
       ) {
-        video.webkitEnterFullscreen();
-        return;
+        try {
+          video.webkitEnterFullscreen();
+          return;
+        } catch {
+          // Fall through to CSS pseudo-fullscreen
+        }
       }
       // No fullscreen API at all: pin the shell to the viewport so the custom
       // controls stay usable.

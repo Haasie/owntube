@@ -24,6 +24,7 @@ import {
   useIdleVisible,
 } from "@/components/player/player-fullscreen";
 import {
+  AirPlayIcon,
   BigPlayOverlayIcon,
   CaptionsIcon,
   CinemaIcon,
@@ -805,6 +806,26 @@ export function PlayerChrome({
                   <PipIcon className="h-5 w-5" />
                 </button>
               ) : null}
+
+              {hydrated && adapter.canAirPlay ? (
+                <button
+                  type="button"
+                  onClick={() => adapter.showAirPlayPicker?.()}
+                  className={cn(
+                    "flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15",
+                    adapter.airPlayActive
+                      ? "bg-white/15 text-[hsl(var(--primary))]"
+                      : "",
+                  )}
+                  aria-label={
+                    adapter.airPlayActive
+                      ? "AirPlay active (connected)"
+                      : "AirPlay"
+                  }
+                >
+                  <AirPlayIcon className="h-5 w-5" />
+                </button>
+              ) : null}
             </div>
           </div>
         </div>
@@ -815,6 +836,7 @@ export function PlayerChrome({
           open={mobileMenuOpen}
           onOpenChange={setMobileMenuOpen}
           shellRef={shellRef}
+          fsActive={fsActive}
           quality={quality}
           audio={audio}
           captions={captions}
@@ -828,6 +850,9 @@ export function PlayerChrome({
           canPip={false}
           pipActive={adapter.pictureInPicture}
           onTogglePip={() => adapter.togglePictureInPicture()}
+          canAirPlay={Boolean(adapter.canAirPlay)}
+          airPlayActive={Boolean(adapter.airPlayActive)}
+          onShowAirPlayPicker={() => adapter.showAirPlayPicker?.()}
         />
       ) : null}
 
@@ -853,8 +878,9 @@ export function PlayerChrome({
 /**
  * Mobile counterpart of the desktop control cluster: everything beyond
  * play/seek/volume/fullscreen lives in this bottom sheet, opened by the ⋯
- * button. Rendered inside the player root (not portaled) so it also shows in
- * element fullscreen, where `fixed` positions against the fullscreen element.
+ * button. In non-fullscreen mode, portals to <body> so it paints above the
+ * shell bottom navigation bar; in element fullscreen, portals into shellRef
+ * so it stays visible inside the fullscreen container.
  */
 function PlayerMobileMenu({
   quality,
@@ -870,9 +896,13 @@ function PlayerMobileMenu({
   canPip,
   pipActive,
   onTogglePip,
+  canAirPlay = false,
+  airPlayActive = false,
+  onShowAirPlayPicker,
   open,
   onOpenChange,
   shellRef,
+  fsActive = false,
 }: Pick<
   ComponentProps<typeof SettingsMenu>,
   "quality" | "audio" | "captions" | "rate" | "setRate"
@@ -885,10 +915,14 @@ function PlayerMobileMenu({
   canPip: boolean;
   pipActive: boolean;
   onTogglePip: () => void;
+  canAirPlay?: boolean;
+  airPlayActive?: boolean;
+  onShowAirPlayPicker?: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** The element that goes fullscreen — the sheet portals into it so it also paints there. */
   shellRef: React.RefObject<HTMLElement | null>;
+  fsActive?: boolean;
 }) {
   const onClose = () => onOpenChange(false);
   return (
@@ -896,11 +930,11 @@ function PlayerMobileMenu({
       open={open}
       onOpenChange={onOpenChange}
       title="Player options"
-      container={shellRef}
+      container={fsActive ? shellRef : undefined}
       panelClassName="border-white/10 bg-zinc-950/95 text-zinc-100 backdrop-blur-md"
       contentClassName="text-sm"
     >
-      {nextUp || canPip ? (
+      {nextUp || canPip || canAirPlay ? (
         <div className="px-1 py-1">
           {nextUp ? (
             <>
@@ -958,9 +992,32 @@ function PlayerMobileMenu({
               </span>
             </button>
           ) : null}
+          {canAirPlay ? (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onShowAirPlayPicker?.();
+              }}
+              className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 hover:bg-white/10"
+              aria-pressed={airPlayActive}
+            >
+              <span>AirPlay</span>
+              <span
+                className={cn(
+                  "text-xs",
+                  airPlayActive
+                    ? "text-[hsl(var(--primary))]"
+                    : "text-zinc-400",
+                )}
+              >
+                {airPlayActive ? "Connected" : "Connect"}
+              </span>
+            </button>
+          ) : null}
         </div>
       ) : null}
-      <div className={nextUp || canPip ? "border-t border-white/10" : ""}>
+      <div className={nextUp || canPip || canAirPlay ? "border-t border-white/10" : ""}>
         <SettingsMenu
           variant="embedded"
           quality={quality}

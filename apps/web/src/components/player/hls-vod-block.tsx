@@ -348,6 +348,7 @@ export function HlsVodBlock({
         muted={shortsMode}
         playsInline
         preload="auto"
+        {...{ "x-webkit-airplay": "allow" }}
         // Video/segments (dash.js/hls.js fetch these themselves, unaffected
         // by this attribute) and caption <track>s now live on the media
         // origin (see media-origin.ts) — cross-origin <track> loading

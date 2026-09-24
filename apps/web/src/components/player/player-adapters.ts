@@ -7,6 +7,8 @@ import {
   resumePeakLimiter,
   suspendPeakLimiter,
 } from "@/lib/audio-peak-limiter";
+import { isIosLikeBrowser } from "@/lib/ios-playback";
+import { writePlayerMediaPrefs } from "@/lib/player-media-prefs";
 import { volumeGainFor } from "@/lib/player-volume-gain";
 
 export function useNativeAdapter(opts: {
@@ -22,6 +24,8 @@ export function useNativeAdapter(opts: {
   const bump = useCallback(() => force((x) => x + 1), []);
   const [muted, setMuted] = useState(opts.initialMuted ?? false);
   const [pictureInPicture, setPictureInPicture] = useState(false);
+  const [canAirPlay, setCanAirPlay] = useState(false);
+  const [airPlayActive, setAirPlayActive] = useState(false);
   const limiterActiveRef = useRef(false);
   const activatedRef = useRef(false);
 
@@ -65,7 +69,11 @@ export function useNativeAdapter(opts: {
       const volUi = overrides?.volumeUi ?? externalVolume;
       const rate = v.playbackRate ?? 1;
       try {
-        v.muted = m || volUi <= 0;
+        const ios = isIosLikeBrowser();
+        // On iOS devices, the audio level is controlled by hardware buttons,
+        // and setting v.volume has no effect. Never force muted simply because
+        // volUi <= 0 on iOS.
+        v.muted = m || (!ios && volUi <= 0);
         if (!v.muted) {
           v.volume = Math.min(
             1,
@@ -280,6 +288,41 @@ export function useNativeAdapter(opts: {
     };
   }, []);
 
+  // WebKit AirPlay playback target availability and active target state
+  useEffect(() => {
+    const v = videoRef.current as (HTMLVideoElement & {
+      webkitCurrentPlaybackTargetIsWireless?: boolean;
+      webkitShowPlaybackTargetPicker?: () => void;
+    }) | null;
+    if (!v) return;
+
+    const onTargetAvailability = (e: Event & { availability?: string }) => {
+      setCanAirPlay(e.availability === "available");
+    };
+    const onWirelessChange = () => {
+      setAirPlayActive(Boolean(v.webkitCurrentPlaybackTargetIsWireless));
+    };
+
+    v.addEventListener(
+      "webkitplaybacktargetavailabilitychanged" as never,
+      onTargetAvailability,
+    );
+    v.addEventListener(
+      "webkitcurrentplaybacktargetiswirelesschanged" as never,
+      onWirelessChange,
+    );
+    return () => {
+      v.removeEventListener(
+        "webkitplaybacktargetavailabilitychanged" as never,
+        onTargetAvailability,
+      );
+      v.removeEventListener(
+        "webkitcurrentplaybacktargetiswirelesschanged" as never,
+        onWirelessChange,
+      );
+    };
+  }, [videoRef.current]);
+
   const v = videoRef.current;
   const duration =
     v && Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
@@ -359,6 +402,7 @@ export function useNativeAdapter(opts: {
       setExternalVolume(n);
       const nextMuted = n === 0 ? true : n > 0 && muted ? false : muted;
       if (nextMuted !== muted) setMuted(nextMuted);
+      writePlayerMediaPrefs({ volume: n, muted: nextMuted });
       if (n > 0) {
         activatedRef.current = true;
         ensureLimiter();
@@ -377,15 +421,23 @@ export function useNativeAdapter(opts: {
     },
     toggleMuted: () => {
       const next = !muted;
+      let nextVol = externalVolume;
+      // If unmuting when volume was 0 (or clamped on mobile), restore volume to 0.5
+      // so unmuting actually produces audible sound.
+      if (!next && externalVolume <= 0) {
+        nextVol = 0.5;
+        setExternalVolume(0.5);
+      }
       setMuted(next);
+      writePlayerMediaPrefs({ volume: nextVol, muted: next });
       const a = audioRef.current;
       if (a) {
-        syncCompanionVolume({ muted: next });
+        syncCompanionVolume({ muted: next, volumeUi: nextVol });
         if (!next && videoRef.current && !videoRef.current.paused) {
           void a.play().catch(() => {});
         }
       } else {
-        applyVideoElementVolume({ muted: next });
+        applyVideoElementVolume({ muted: next, volumeUi: nextVol });
       }
     },
     setPlaybackRate: (r) => {
@@ -422,6 +474,16 @@ export function useNativeAdapter(opts: {
         void document.exitPictureInPicture().catch(() => {});
       } else {
         void el.requestPictureInPicture().catch(() => {});
+      }
+    },
+    canAirPlay,
+    airPlayActive,
+    showAirPlayPicker: () => {
+      const el = videoRef.current as (HTMLVideoElement & {
+        webkitShowPlaybackTargetPicker?: () => void;
+      }) | null;
+      if (typeof el?.webkitShowPlaybackTargetPicker === "function") {
+        el.webkitShowPlaybackTargetPicker();
       }
     },
   };

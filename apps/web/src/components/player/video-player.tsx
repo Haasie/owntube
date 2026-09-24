@@ -280,7 +280,10 @@ export function VideoPlayer({
     if (typeof restoredVolume === "number" && Number.isFinite(restoredVolume)) {
       return Math.min(1, Math.max(0, restoredVolume));
     }
-    return readPlayerMediaPrefs().volume;
+    const prefVol = readPlayerMediaPrefs().volume;
+    return typeof prefVol === "number" && Number.isFinite(prefVol) && prefVol > 0
+      ? prefVol
+      : 0.48;
   });
   const [queue, setQueue] = useState<WatchQueueItem[]>([]);
   const [autoplayNext, setAutoplayNext] = useState(autoplayNextDefault ?? true);
