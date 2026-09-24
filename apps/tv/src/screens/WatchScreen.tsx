@@ -1,3 +1,7 @@
+import {
+  ORIGINAL_CAPTION_LANGUAGE,
+  pickDefaultCaptionIndex,
+} from "@web/lib/caption-default";
 import type {
   SponsorBlockCategory,
   SponsorBlockSegment,
@@ -43,6 +47,7 @@ import { UpNext } from "@/components/UpNext";
 import { VideoRow } from "@/components/VideoRow";
 import {
   audioLanguageOptions,
+  languageName,
   urlLooksLikeOriginalAudio,
 } from "@/lib/audio-languages";
 import { getToken } from "@/lib/auth-token";
@@ -308,6 +313,8 @@ export function WatchScreen({
   }, []);
   /** The settings panel (gear button). */
   const [menuOpen, setMenuOpen] = useState(false);
+  /** Which page the settings panel opens on (the CC button opens captions). */
+  const [menuStart, setMenuStart] = useState("root");
   const menuOpenRef = useRef(false);
   menuOpenRef.current = menuOpen;
   const closeMenu = useCallback(() => setMenuOpen(false), []);
@@ -392,12 +399,15 @@ export function WatchScreen({
     sponsorBlockAutoSkip: boolean;
     sponsorBlockCategories: SponsorBlockCategory[];
     autoplayNext: boolean;
+    /** Account setting: "original" or a language tag. */
+    captionLanguage: string;
   }>({
     maxHeight: DEFAULT_HEIGHT,
     sponsorBlockEnabled: true,
     sponsorBlockAutoSkip: true,
     sponsorBlockCategories: DEFAULT_SKIP_CATEGORIES,
     autoplayNext: true,
+    captionLanguage: ORIGINAL_CAPTION_LANGUAGE,
   });
   const scrubRef = useRef<number | null>(null);
   const holdTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -500,6 +510,7 @@ export function WatchScreen({
           sponsorBlockAutoSkip: st.sponsorBlockAutoSkip,
           sponsorBlockCategories: st.sponsorBlockCategories,
           autoplayNext: st.autoplayNext,
+          captionLanguage: st.captionLanguage ?? ORIGINAL_CAPTION_LANGUAGE,
         };
       })
       // Defaults already sit in the ref; a settings failure shouldn't block play.
@@ -764,12 +775,32 @@ export function WatchScreen({
     setSubtitleTracks(tracks);
     if (captionsAppliedRef.current || tracks.length === 0) return;
     captionsAppliedRef.current = true;
-    const preferred = playerPrefs().captionLanguage;
-    const match = preferred ? findTrack(tracks, preferred) : undefined;
-    if (match) {
-      player.subtitleTrack = match;
-      setSubtitleTrack(match);
+    if (!playerPrefs().captionsEnabled) return;
+    const track = defaultCaptionTrack(tracks);
+    if (track) {
+      player.subtitleTrack = track;
+      setSubtitleTrack(track);
     }
+  };
+
+  /** The account's caption language for this video (see caption-default). */
+  const defaultCaptionTrack = (
+    tracks: SubtitleTrack[],
+  ): SubtitleTrack | undefined => {
+    const original = audioLanguageOptions(
+      detailRef.current?.audioSources ?? [],
+    ).find((lang) => lang.isOriginal)?.lang;
+    const index = pickDefaultCaptionIndex(
+      tracks.map((t) => ({
+        label: t.label ?? "",
+        languageCode: t.language ?? "",
+      })),
+      {
+        preferred: settingsRef.current.captionLanguage,
+        originalAudioLanguage: original,
+      },
+    );
+    return tracks[index];
   };
   const applySubtitleTracksRef = useRef(applySubtitleTracks);
   applySubtitleTracksRef.current = applySubtitleTracks;
@@ -1310,25 +1341,14 @@ export function WatchScreen({
    * Subtitles come from the stream's own tracks, so the toggle is only useful
    * once ExoPlayer has surfaced at least one.
    */
-  /** Picks a caption track (null = off) and remembers its language. */
+  /**
+   * Picks a caption track (null = off) for this video, and remembers on/off
+   * for the next; the language comes from the account setting each time.
+   */
   const chooseSubtitles = (track: SubtitleTrack | null) => {
     player.subtitleTrack = track;
     setSubtitleTrack(track);
-    savePlayerPrefs({ captionLanguage: track?.language ?? null });
-  };
-
-  /** The CC button: off, or back on in the remembered (else first) language. */
-  const toggleSubtitles = () => {
-    if (subtitleTrack) {
-      chooseSubtitles(null);
-      return;
-    }
-    const preferred = playerPrefs().captionLanguage;
-    chooseSubtitles(
-      (preferred ? findTrack(subtitleTracks, preferred) : undefined) ??
-        subtitleTracks[0] ??
-        null,
-    );
+    savePlayerPrefs({ captionsEnabled: track !== null });
   };
 
   /**
@@ -1537,8 +1557,13 @@ export function WatchScreen({
         : "Auto"
       : `${qualityCap}p`;
   const heights = qualityHeights(detail);
-  const subtitleLabel = (track: SubtitleTrack) =>
-    track.label || track.language || "Unknown";
+  // Some streams label tracks with just their code ("nl-nl"): name those.
+  const subtitleLabel = (track: SubtitleTrack) => {
+    const label = track.label?.trim();
+    const code = track.language?.trim();
+    if (label && label.toLowerCase() !== code?.toLowerCase()) return label;
+    return code ? languageName(code) : label || "Unknown";
+  };
 
   /** The settings panel's pages, rebuilt from current state on each render. */
   const buildPage = (key: string): MenuPage => {
@@ -1583,7 +1608,11 @@ export function WatchScreen({
               selected: subtitleTrack === null,
               onPress: () => chooseSubtitles(null),
             },
-            ...subtitleTracks.map<MenuItem>((track) => ({
+            // The account's language first, then the rest as the stream lists them.
+            ...captionsInPickerOrder(
+              subtitleTracks,
+              defaultCaptionTrack(subtitleTracks),
+            ).map<MenuItem>((track) => ({
               key: track.id,
               label: subtitleLabel(track),
               selected: subtitleTrack?.id === track.id,
@@ -1638,20 +1667,7 @@ export function WatchScreen({
               detail: qualityLabelNow,
               submenu: "quality",
             },
-            // The CC button toggles a lone track; the menu only adds a
-            // language choice.
-            ...(subtitleTracks.length > 1
-              ? [
-                  {
-                    key: "captions",
-                    label: "Captions",
-                    detail: subtitleTrack
-                      ? subtitleLabel(subtitleTrack)
-                      : "Off",
-                    submenu: "captions",
-                  },
-                ]
-              : []),
+            // Captions have their own button (CC), which opens their page.
             ...(canChooseAudioLanguage
               ? [
                   {
@@ -1779,7 +1795,11 @@ export function WatchScreen({
           onCancel={onBack}
         />
       ) : menuOpen ? (
-        <MenuPanel buildPage={buildPage} onClose={closeMenu} />
+        <MenuPanel
+          buildPage={buildPage}
+          onClose={closeMenu}
+          startPage={menuStart}
+        />
       ) : detailsOpen ? (
         <DetailsPanel detail={detail} onClose={closeDetails} />
       ) : (
@@ -2018,7 +2038,10 @@ export function WatchScreen({
                     icon="type"
                     action="captions"
                     active={subtitleTrack !== null}
-                    onPress={toggleSubtitles}
+                    onPress={() => {
+                      setMenuStart("captions");
+                      setMenuOpen(true);
+                    }}
                     onFocusChange={onButtonFocusChange}
                   />
                 ) : null}
@@ -2030,7 +2053,10 @@ export function WatchScreen({
                 {/* Quality, captions, audio language, speed, chapters… */}
                 <IconButton
                   icon="more-vertical"
-                  onPress={() => setMenuOpen(true)}
+                  onPress={() => {
+                    setMenuStart("root");
+                    setMenuOpen(true);
+                  }}
                   onFocusChange={onButtonFocusChange}
                 />
               </View>
@@ -2419,18 +2445,6 @@ const styles = StyleSheet.create({
   muted: { color: colors.mutedForeground, fontSize: fontSize.md },
 });
 
-/** A track in the wanted language, matching "en" to "en-US" and back. */
-function findTrack(
-  tracks: SubtitleTrack[],
-  language: string,
-): SubtitleTrack | undefined {
-  const base = language.split("-")[0];
-  return (
-    tracks.find((t) => t.language === language) ??
-    tracks.find((t) => t.language.split("-")[0] === base)
-  );
-}
-
 /**
  * The quality rungs the video offers, tallest first — what the panel lists as
  * ceilings for the DASH source. By YouTube's label ("1080p"), which the
@@ -2726,4 +2740,13 @@ function mimeVideoTypeWithoutAudioCodecs(mimeType: string | undefined) {
   );
   const hasAudio = /mp4a|opus|vorbis|flac|ac-3|ec-3/.test(codecs);
   return hasVideo && !hasAudio;
+}
+
+/** `tracks` with `first` (the account's default) moved to the front. */
+function captionsInPickerOrder(
+  tracks: SubtitleTrack[],
+  first: SubtitleTrack | undefined,
+): SubtitleTrack[] {
+  if (!first) return tracks;
+  return [first, ...tracks.filter((t) => t.id !== first.id)];
 }
