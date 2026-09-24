@@ -237,6 +237,7 @@ export function WatchScreen({
   onReplaceVideo,
   onOpenChannel,
   onBack,
+  onHome,
   active = true,
 }: {
   videoId: string;
@@ -247,6 +248,8 @@ export function WatchScreen({
   onReplaceVideo: (videoId: string, options?: OpenVideoOptions) => void;
   onOpenChannel: (channelId: string) => void;
   onBack: () => void;
+  /** Leaves the player for the Home section. */
+  onHome: () => void;
   /**
    * False while a channel page sits on top: the shell keeps the player
    * mounted (so Back returns to the same spot without reloading) but it must
@@ -1387,7 +1390,7 @@ export function WatchScreen({
   /**
    * Marking the playing video watched finishes it, as reaching the end would:
    * recorded as completed (which also dequeues it), then the up-next card, or
-   * back out when nothing follows.
+   * Home when nothing follows.
    */
   const markWatched = () => {
     const detail = detailRef.current;
@@ -1410,7 +1413,7 @@ export function WatchScreen({
       setEnded(true);
       showToast({ text: "Marked as watched" });
     } else {
-      onBack();
+      onHome();
     }
   };
 
@@ -1615,7 +1618,9 @@ export function WatchScreen({
               detail: qualityLabelNow,
               submenu: "quality",
             },
-            ...(subtitleTracks.length > 0
+            // The CC button toggles a lone track; the menu only adds a
+            // language choice.
+            ...(subtitleTracks.length > 1
               ? [
                   {
                     key: "captions",
@@ -1652,11 +1657,14 @@ export function WatchScreen({
               submenu: "playlists",
             },
             {
-              key: "watched",
-              label: "Mark as watched",
+              key: "queue",
+              label: queued ? "Remove from queue" : "Add to queue",
               onPress: () => {
-                markWatched();
                 setMenuOpen(false);
+                toggleQueued();
+                showToast({
+                  text: queued ? "Removed from queue" : "Added to queue",
+                });
               },
             },
             {
@@ -1969,10 +1977,10 @@ export function WatchScreen({
                   onPress={() => setRatingValue("dislike")}
                   onFocusChange={onButtonFocusChange}
                 />
+                {/* Finishes the video: see markWatched. */}
                 <IconButton
-                  icon={queued ? "check" : "plus"}
-                  active={queued}
-                  onPress={toggleQueued}
+                  icon="check-circle"
+                  onPress={markWatched}
                   onFocusChange={onButtonFocusChange}
                 />
                 <IconButton
@@ -1998,7 +2006,7 @@ export function WatchScreen({
                 />
                 {/* Quality, captions, audio language, speed, chapters… */}
                 <IconButton
-                  icon="settings"
+                  icon="more-vertical"
                   onPress={() => setMenuOpen(true)}
                   onFocusChange={onButtonFocusChange}
                 />

@@ -449,6 +449,7 @@ export function Shell({
             onReplaceVideo={replaceVideo}
             onOpenChannel={nav.openChannel}
             onBack={pop}
+            onHome={() => selectSection("home")}
           />
         </ScreenLayer>
       ) : null}
