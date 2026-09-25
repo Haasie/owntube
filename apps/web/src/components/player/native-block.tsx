@@ -113,6 +113,54 @@ export function NativeMuxedBlock({
     initialSeekAppliedRef.current = false;
   }, [reactKey, startAtSeconds]);
 
+  // Stall watchdog for the regular watch page: `paused` flips false as soon
+  // as play() is called, whether or not the element ever actually reaches
+  // real playback — a video can sit "playing" with a spinner forever (seen
+  // on some iOS Safari + synthesized-manifest combinations) with no `error`
+  // event to catch, so nothing else notices. If `playing` hasn't genuinely
+  // fired within 6s, report it (client-log, for visibility on the next
+  // occurrence) and advance to the next fallback candidate — instead of the
+  // viewer having to discover that a manual seek unsticks it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reactKey rebinds the watchdog for a newly mounted native source.
+  useEffect(() => {
+    if (!autoplay || shortsMode || miniMode) return;
+    const v = videoRef.current;
+    if (!v) return;
+    let settled = !v.paused && v.readyState >= 3;
+    const onPlaying = () => {
+      settled = true;
+    };
+    v.addEventListener("playing", onPlaying);
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      try {
+        void fetch("/api/client-log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            component: "NativeMuxedBlock",
+            src,
+            eventType: "stall_watchdog_fallback",
+            timeoutMs: 6000,
+            readyState: v.readyState,
+            networkState: v.networkState,
+            paused: v.paused,
+            currentTime: v.currentTime,
+            duration: v.duration,
+            error: v.error
+              ? { code: v.error.code, message: v.error.message }
+              : null,
+          }),
+        }).catch(() => {});
+      } catch {}
+      emitPlaybackError();
+    }, 6000);
+    return () => {
+      v.removeEventListener("playing", onPlaying);
+      window.clearTimeout(timer);
+    };
+  }, [autoplay, shortsMode, miniMode, reactKey, emitPlaybackError]);
+
   const adapter = useNativeAdapter({
     videoRef,
     audioRef,
