@@ -445,6 +445,9 @@ export function buildMasterPlaylist(
   // machine-translated dubs (with divergent sidx durations and query-encoded URIs)
   // are declared in EXT-X-MEDIA. Serving the single chosen original audio track
   // ensures 100% reliable hardware-accelerated playback across all iOS WebKit browsers.
+  // (Multi-language selection still works on the native-HLS path — see
+  // useHlsVodPlayback's WebKit AudioTrackList handling — this only affects the
+  // synthesized-manifest path's *master playlist* audio declarations.)
   const langAttr = defaultAudio.lang ? `,LANGUAGE="${defaultAudio.lang}"` : "";
   lines.push(
     `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES${langAttr},CHANNELS="2",URI="media.m3u8?itag=140"`,

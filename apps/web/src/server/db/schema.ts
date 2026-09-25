@@ -226,6 +226,25 @@ export const shortsSeen = sqliteTable(
   ],
 );
 
+/**
+ * Seen shorts for signed-out viewers, keyed by the random `owntube_anon` cookie
+ * (see `server/anon-viewer.ts`). Mirrors `shorts_seen` so `/shorts` excludes
+ * already-seen shorts server-side for everyone; rows expire after
+ * ANON_SHORTS_SEEN_TTL_SEC.
+ */
+export const anonShortsSeen = sqliteTable(
+  "anon_shorts_seen",
+  {
+    anonId: text("anon_id").notNull(),
+    videoId: text("video_id").notNull(),
+    seenAt: integer("seen_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("anon_shorts_seen_anon_video_uidx").on(t.anonId, t.videoId),
+    index("anon_shorts_seen_seen_idx").on(t.seenAt),
+  ],
+);
+
 export const videoCache = sqliteTable(
   "video_cache",
   {

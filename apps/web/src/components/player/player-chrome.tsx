@@ -205,6 +205,8 @@ export function PlayerChrome({
     if (fsActive && cinemaMode) onExitCinema();
   }, [fsActive, cinemaMode, onExitCinema]);
 
+  // Pointer type of the press that produced the next surface click.
+  const surfacePointerTypeRef = useRef<string>("mouse");
   const onSurfaceClick = (e: ReactMouseEvent) => {
     if (suppressNextClickRef.current) {
       suppressNextClickRef.current = false;
@@ -215,6 +217,13 @@ export function PlayerChrome({
     if ((e.target as HTMLElement).closest("[data-controls]")) return;
     if (settingsOpen) {
       onSettingsOpenChange(false);
+      return;
+    }
+    // Touch: a tap on the video only brings the controls up (play/pause is
+    // the center button). Toggling here paused the video on every tap meant
+    // to reveal the controls — including taps on the hidden scrubber.
+    if (surfacePointerTypeRef.current === "touch" && !shortsMode) {
+      ping();
       return;
     }
     adapter.togglePaused();
@@ -267,7 +276,10 @@ export function PlayerChrome({
         data-tap-surface
         aria-label={adapter.paused ? "Play" : "Pause"}
         onClick={onSurfaceClick}
-        onPointerDown={onSurfacePointerDown}
+        onPointerDown={(e) => {
+          surfacePointerTypeRef.current = e.pointerType;
+          onSurfacePointerDown(e);
+        }}
         onPointerUp={onSurfacePointerUp}
         onPointerCancel={onSurfacePointerUp}
         onPointerLeave={onSurfacePointerLeave}
@@ -289,6 +301,14 @@ export function PlayerChrome({
           </div>
         </div>
       ) : null}
+
+      {/* Stands in for WebKit's "playing in picture in picture" placeholder,
+          which fades out with the inline <video> while it's in native PiP
+          (see player-captions.ts). Shown by CSS off `data-native-pip`. */}
+      <div className="ot-pip-placeholder" aria-hidden>
+        <PipIcon className="h-10 w-10" />
+        <span>Playing in Picture in Picture</span>
+      </div>
 
       {/* On-video scrub preview: while actively dragging the scrubber, the frame
           fills the whole video area (YouTube-style) with the target time floated
@@ -522,6 +542,7 @@ export function PlayerChrome({
             current={seekPos}
             duration={adapter.duration}
             buffered={adapter.bufferedEnd}
+            interactive={chromeShown}
             onScrub={(t) => {
               setScrub(t);
               adapter.seekPreview(t);
@@ -533,11 +554,15 @@ export function PlayerChrome({
           />
         </div>
       ) : miniMode ? null : (
+        // Never a tap target itself: its gradient padding (pt-12) reaches up
+        // over the center play/skip buttons on a small phone player and
+        // swallowed their taps. Only the scrubber and the control row
+        // capture, and only while the chrome is shown.
         <div
           data-controls
           className={cn(
-            "absolute inset-x-0 bottom-0 z-30 transition-opacity duration-200",
-            chromeShown ? "opacity-100" : "opacity-0 pointer-events-none",
+            "pointer-events-none absolute inset-x-0 bottom-0 z-30 transition-opacity duration-200",
+            chromeShown ? "opacity-100" : "opacity-0",
           )}
           style={{
             background:
@@ -562,6 +587,7 @@ export function PlayerChrome({
               sponsorSegments={sponsorSegments}
               scrubPreview={scrubPreview ?? null}
               completed={watchedCompleted}
+              interactive={chromeShown}
               onScrub={(t) => {
                 setScrub(t);
                 adapter.seekPreview(t);
@@ -571,7 +597,15 @@ export function PlayerChrome({
                 adapter.seek(t);
               }}
             />
-            <div className="mt-[-18px] flex items-center gap-1.5 text-white sm:mt-1 sm:gap-2">
+            {/* Kept clear of the scrubber's 40px touch strip on every size: phones
+                used to pull this row up 18px into it, so button taps landed
+                on the scrubber. */}
+            <div
+              className={cn(
+                "mt-1 flex items-center gap-1.5 text-white sm:gap-2",
+                chromeShown ? "pointer-events-auto" : "pointer-events-none",
+              )}
+            >
               {/* Phones use the big center play/pause overlay instead. */}
               <button
                 type="button"

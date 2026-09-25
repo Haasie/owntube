@@ -646,6 +646,63 @@ describe("fetchVideoComments", () => {
     expect(r.comments[0]?.text).toContain("1:42");
     sqlite.close();
   });
+
+  it("falls back to newest-first when Invidious 500s on top comments", async () => {
+    const { db, sqlite } = createTestDb();
+    process.env.INVIDIOUS_BASE_URL = "https://inv.test";
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ error: 'Missing hash key: "commentRenderer"' }),
+          { status: 500 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            videoId: "hoeSGr_-bK0",
+            commentCount: 25,
+            continuation: "next-page",
+            comments: [
+              {
+                author: "@viewer",
+                authorId: "UCx",
+                commentId: "c1",
+                content: "Lovely trail",
+                authorThumbnails: [],
+              },
+            ],
+          }),
+        ),
+      );
+
+    const r = await fetchVideoComments(db, {
+      videoId: "hoeSGr_-bK0",
+      sortBy: "top",
+    });
+    expect(r.comments.map((c) => c.commentId)).toEqual(["c1"]);
+    expect(r.continuation).toBe("next-page");
+    expect(r.warning).toMatch(/newest first/);
+    const urls = vi.mocked(fetch).mock.calls.map((c) => String(c[0]));
+    expect(urls[0]).toContain("sort_by=top");
+    expect(urls[1]).toContain("sort_by=new");
+    sqlite.close();
+  });
+
+  it("does not retry newest-first when Invidious is unreachable", async () => {
+    const { db, sqlite } = createTestDb();
+    process.env.INVIDIOUS_BASE_URL = "https://inv.test";
+
+    vi.mocked(fetch).mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+    await expect(
+      fetchVideoComments(db, { videoId: "hoeSGr_-bK0", sortBy: "top" }),
+    ).rejects.toThrow();
+    const urls = vi.mocked(fetch).mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes("sort_by=new"))).toBe(false);
+    sqlite.close();
+  });
 });
 
 describe("fetchShortsFeed", () => {

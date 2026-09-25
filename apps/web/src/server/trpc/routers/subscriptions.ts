@@ -11,6 +11,7 @@ import { isStrictShortVideo } from "@/lib/short-video";
 import { normalizeYoutubeChannelId } from "@/lib/youtube-channel-id";
 import { refreshChannelsLatestVideoAt } from "@/server/channel-meta/recency";
 import {
+  isFreshChannelMeta,
   nowUnix,
   readChannelMetaByIds,
   refreshChannelMetaIfStale,
@@ -155,17 +156,42 @@ async function listDetailedChannelRows(
   db: AppDb,
   subs: { channelId: string; subscribedAt: number }[],
 ): Promise<SubscriptionChannelDetail[]> {
-  const out: SubscriptionChannelDetail[] = [];
-  for (let i = 0; i < subs.length; i += LIST_DETAILED_BATCH) {
+  // One read for every channel. Only those without fresh meta go upstream, in
+  // the throttled batches below; the batch pause used to apply to every
+  // channel, so 177 subscriptions with all meta cached still took ~2.9 s.
+  const cached = readChannelMetaByIds(
+    db,
+    subs.map((s) => s.channelId),
+  );
+  const stale = subs.filter((s) => {
+    const meta = cached.get(s.channelId);
+    return !meta || !isFreshChannelMeta(meta.updatedAt);
+  });
+  const refreshed = new Map<string, SubscriptionChannelDetail>();
+  for (let i = 0; i < stale.length; i += LIST_DETAILED_BATCH) {
     if (i > 0) await sleepMs(80);
-    const chunk = subs.slice(i, i + LIST_DETAILED_BATCH);
+    const chunk = stale.slice(i, i + LIST_DETAILED_BATCH);
     const part = await Promise.all(
       chunk.map((s) =>
         fetchSubscriptionChannelDetail(db, s.channelId, s.subscribedAt),
       ),
     );
-    out.push(...part);
+    for (const row of part) refreshed.set(row.channelId, row);
   }
+  const out: SubscriptionChannelDetail[] = subs.map((s) => {
+    const row = refreshed.get(s.channelId);
+    if (row) return row;
+    const meta = cached.get(s.channelId);
+    return {
+      channelId: s.channelId,
+      subscribedAt: s.subscribedAt,
+      channelName: meta?.channelName ?? s.channelId,
+      avatarUrl: meta?.avatarUrl ?? null,
+      description: null,
+      latestVideoAt: null,
+      subscriberCount: null,
+    };
+  });
   // Enrich with the newest-upload timestamp in one channel_meta read.
   const metaById = readChannelMetaByIds(
     db,

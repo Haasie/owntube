@@ -1,3 +1,5 @@
+import { PixelRatio } from "react-native";
+
 /** mm:ss / h:mm:ss for durations and playback time. */
 export function formatTime(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -121,18 +123,41 @@ export function channelInitial(name: string | undefined): string {
   return first ? first.toUpperCase() : "o";
 }
 
+/** An unsigned `/vi/<id>/<still>` path on YouTube's CDN or an Invidious instance. */
+const LARGE_STILL_RE =
+  /^(\/vi\/[^/]+\/)(?:maxres|maxresdefault|hq720)\.jpe?g$/i;
+
 /**
- * A video's thumbnail, falling back to YouTube's own still by id when the row
- * carries none (history rows, for one, leave it to the client — as on the web).
+ * A video's thumbnail for a card, falling back to YouTube's own still by id
+ * when the row carries none (history rows, for one, leave it to the client —
+ * as on the web).
+ *
+ * Feed rows arrive with the 1280x720 `maxres` still, chosen for the web's
+ * large cards. A TV card is 264x148 dp, and an Invidious instance takes one
+ * to two seconds to answer `maxres.jpg` every time (it fetches and re-encodes
+ * it per request), against ~30 ms for `hqdefault.jpg` — which is why a fresh
+ * row sat grey for a beat. So cards ask for `hqdefault` instead; its 4:3
+ * letterbox bars fall outside the card's 16:9 "cover" crop. Signed instance
+ * URLs (`?host=…&rs=…`) pair the tier with the signature and stay as they are.
  */
 export function videoThumbnailUrl(video: {
   videoId: string;
   thumbnailUrl?: string;
 }): string {
-  return (
-    video.thumbnailUrl ??
-    `https://i.ytimg.com/vi/${encodeURIComponent(video.videoId)}/hqdefault.jpg`
-  );
+  const url = video.thumbnailUrl;
+  if (!url) {
+    return `https://i.ytimg.com/vi/${encodeURIComponent(video.videoId)}/hqdefault.jpg`;
+  }
+  try {
+    const u = new URL(url);
+    if (u.search) return url;
+    const m = LARGE_STILL_RE.exec(u.pathname);
+    if (!m) return url;
+    u.pathname = `${m[1]}hqdefault.jpg`;
+    return u.toString();
+  } catch {
+    return url;
+  }
 }
 
 /**
@@ -175,4 +200,20 @@ export function htmlToPlainText(html: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&");
+}
+
+/**
+ * A channel avatar URL asking for the size it is drawn at. Feeds hand out
+ * Google's 512px avatars (`…=s512-c-k-…`) for circles of 28-96dp; decoded
+ * that is 1 MB each, and Subscriptions keeps an avatar per subscribed channel
+ * attached. With 177 channels the textures overran the GPU cache and every
+ * frame re-uploaded them: 200+ ms frames on a KPN box. Google serves any
+ * `=sN`, so ask for the drawn size in pixels. Other URLs pass through.
+ */
+export function sizedAvatarUrl(url: string, sizeDp: number): string {
+  const px = Math.ceil(sizeDp * PixelRatio.get());
+  return url.replace(
+    /^(https:\/\/(?:yt\d\.)?(?:googleusercontent|ggpht)\.com\/[^=?#]+)=s\d+/,
+    `$1=s${px}`,
+  );
 }

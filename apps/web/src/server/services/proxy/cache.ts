@@ -59,6 +59,8 @@ export function searchCacheKey(input: SearchVideosInput): string {
         q: input.q,
         limit: input.limit ?? 20,
         c: input.continuation ?? null,
+        // Only present when set, so existing unfiltered rows keep their keys.
+        ...(input.date ? { d: input.date } : {}),
       }),
     )
     .digest("hex");

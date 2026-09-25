@@ -271,6 +271,21 @@ function captionAdaptationSets(
   });
 }
 
+/**
+ * Subtitle AdaptationSets for a manifest assembled elsewhere (the SABR VOD
+ * path, `sabr-vod.ts`), as one XML fragment. Best-effort like `generateMpd`: a
+ * caption lookup failure costs the subtitles, not the playback.
+ */
+export async function vodCaptionAdaptationSets(
+  videoId: string,
+  firstId: number,
+): Promise<string> {
+  const captions = await fetchVideoCaptions(videoId).catch(
+    () => [] as InvidiousCaption[],
+  );
+  return captionAdaptationSets(videoId, captions, firstId).join("\n");
+}
+
 /** Pure MPD builder (exported for tests). */
 export function buildMpd(
   videos: AdaptiveFormat[],

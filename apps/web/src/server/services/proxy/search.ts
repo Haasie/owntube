@@ -40,6 +40,9 @@ export function buildInvidiousSearchUrl(
   if (input.region) {
     u.searchParams.set("region", input.region.toUpperCase());
   }
+  if (input.date) {
+    u.searchParams.set("date", input.date);
+  }
   const page =
     input.continuation && /^\d+$/.test(input.continuation)
       ? input.continuation
