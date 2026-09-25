@@ -474,6 +474,7 @@ export function SplitBlock({
         playsInline
         muted
         preload="auto"
+        {...{ "x-webkit-airplay": "allow" }}
         autoPlay={shortsMode || autoplay}
         // src + caption <track>s are on the media origin (media-origin.ts);
         // cross-origin <track> loading requires this. No credentials needed.

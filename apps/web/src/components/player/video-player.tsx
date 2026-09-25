@@ -55,6 +55,7 @@ import {
 } from "@/lib/player-media-prefs";
 import type { SponsorBlockPrefs } from "@/lib/sponsorblock-prefs";
 import { cn } from "@/lib/utils";
+import { isIosLikeBrowser } from "@/lib/ios-playback";
 import type { VideoChapter } from "@/lib/video-chapters";
 import { videoIdFromWatchHref } from "@/lib/yt-routes";
 import type { VideoStoryboard } from "@/server/services/proxy.types";
@@ -494,9 +495,24 @@ export function VideoPlayer({
       if (currentTime > 0) {
         setResumeSeekSeconds(currentTime);
       }
+      // On iOS, split video+audio (separate <video muted> + <audio>) drifts
+      // apart during AirPlay / Screen Mirroring ("synchrone weergave"):
+      // the two elements are buffered independently over the wireless link
+      // and diverge by hundreds of ms. Prefer muxed (single-container,
+      // physically sync-guaranteed) even though max resolution is lower.
+      let fallbackVariants = effectivePayload.progressiveFallback;
+      if (isIosLikeBrowser()) {
+        const muxed = fallbackVariants.filter((v) => v.t === "muxed");
+        if (muxed.length > 0) {
+          fallbackVariants = [
+            ...muxed,
+            ...fallbackVariants.filter((v) => v.t !== "muxed"),
+          ];
+        }
+      }
       setOverridePayload({
         mode: "progressive",
-        variants: effectivePayload.progressiveFallback,
+        variants: fallbackVariants,
       });
       return;
     }

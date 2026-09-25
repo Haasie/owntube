@@ -996,8 +996,8 @@ function PlayerMobileMenu({
             <button
               type="button"
               onClick={() => {
-                onClose();
                 onShowAirPlayPicker?.();
+                onClose();
               }}
               className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 hover:bg-white/10"
               aria-pressed={airPlayActive}
