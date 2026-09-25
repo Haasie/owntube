@@ -104,7 +104,14 @@ Rendering goes through `sharp`, matching `apps/web`'s icon export. Do not
 substitute ImageMagick: its built-in SVG renderer silently drops the chevron,
 which is a stroked rather than filled path.
 
-## Not included (add only if needed)
-No custom native code yet. If lock-screen audio without PiP doesn't hold on
-device, the next step is a small **Swift** file activating an
-`AVAudioSession(.playback)` — deliberately deferred to keep this minimal.
+## Native code
+
+`src/lib.rs` activates a `.playback` `AVAudioSession` (with AirPlay allowed) at
+launch via the `objc2-avf-audio` crate (`audio_session::activate_playback`,
+called from `.setup()`) — no Swift needed, same `objc2` FFI approach already
+used for the App Group queue sync. Paired with `Info-ios.plist`'s
+`UIBackgroundModes: audio`; without both, iOS suspends WKWebView media on
+lock. **Not build-verified on-device** — this repo has no macOS/Xcode
+toolchain available in CI at the time of writing, so double-check
+`pnpm ios:dev` (or an Xcode build) picks up `objc2-avf-audio` cleanly and that
+lock-screen/AirPlay audio actually holds before relying on it.

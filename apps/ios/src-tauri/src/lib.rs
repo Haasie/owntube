@@ -65,6 +65,39 @@ fn sync_watch_queue(raw: String) {
     let _ = raw;
 }
 
+#[cfg(target_os = "ios")]
+mod audio_session {
+    use objc2_avf_audio::{
+        AVAudioSession, AVAudioSessionCategoryOptions, AVAudioSessionCategoryPlayback,
+    };
+
+    /// Activates a `.playback` AVAudioSession with AirPlay allowed. Info-ios.plist's
+    /// `UIBackgroundModes: audio` only keeps the process alive in the background —
+    /// without this, iOS still suspends the WKWebView's media on lock/backgrounding,
+    /// and AirPlay/Now Playing route handoff is unreliable. Call once at launch.
+    pub fn activate_playback() {
+        // Safety: sharedInstance()/setCategory/setActive are the standard,
+        // documented AVFAudio entry points for this, called once on launch
+        // before any media element starts playing.
+        unsafe {
+            let Some(category) = AVAudioSessionCategoryPlayback else {
+                eprintln!("[owntube] AVAudioSessionCategoryPlayback unavailable");
+                return;
+            };
+            let session = AVAudioSession::sharedInstance();
+            if let Err(err) = session.setCategory_withOptions_error(
+                category,
+                AVAudioSessionCategoryOptions::AllowAirPlay,
+            ) {
+                eprintln!("[owntube] AVAudioSession setCategory failed: {err:?}");
+            }
+            if let Err(err) = session.setActive_error(true) {
+                eprintln!("[owntube] AVAudioSession setActive failed: {err:?}");
+            }
+        }
+    }
+}
+
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 mod app_group {
     use super::{APP_GROUP, QUEUE_KEY};
@@ -96,6 +129,9 @@ pub fn run() {
             let _ = webview.eval(QUEUE_SYNC_SCRIPT);
         })
         .setup(|app| {
+            #[cfg(target_os = "ios")]
+            audio_session::activate_playback();
+
             // Deep links: fires for both cold-start launch URL and warm opens.
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
