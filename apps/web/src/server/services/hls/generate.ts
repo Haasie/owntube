@@ -532,8 +532,9 @@ export async function generateMediaPlaylist(
     ? `stream.mp4?itag=${encodeURIComponent(itag)}&xtags=${encodeURIComponent(xtags)}`
     : `stream.mp4?itag=${encodeURIComponent(itag)}`;
   const [ia, ib] = f.init.split("-").map(Number);
-  const targetDuration = Math.ceil(
-    sidx.refs.reduce((m, r) => Math.max(m, r.duration), 0),
+  const targetDuration = Math.max(
+    10,
+    Math.ceil(sidx.refs.reduce((m, r) => Math.max(m, r.duration), 0)),
   );
   const lines = [
     "#EXTM3U",

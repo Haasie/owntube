@@ -694,10 +694,16 @@ export function buildWatchPlayback(
   // with no adaptive streams — or whose adaptive streams lack the byte-range
   // indexes the synthesized manifest is built from (those 502).
   if (canSynthesizeManifest(detail)) {
+    let fallbackVariants = buildFullQualitySelectorList(merged);
+    if (options?.avoidSplitAudioVideo) {
+      const muxed = fallbackVariants.filter((v) => v.t === "muxed");
+      const split = fallbackVariants.filter((v) => v.t === "split");
+      fallbackVariants = [...muxed, ...split];
+    } else {
+      fallbackVariants = preferPlaybackDefault(fallbackVariants);
+    }
     const progressiveFallback =
-      merged.length > 0
-        ? preferPlaybackDefault(buildFullQualitySelectorList(merged))
-        : undefined;
+      merged.length > 0 ? fallbackVariants : undefined;
     return {
       kind: "hls",
       url: `/hls/${detail.videoId}/master.m3u8`,
@@ -711,9 +717,14 @@ export function buildWatchPlayback(
   }
 
   if (merged.length > 0) {
-    const variants = preferPlaybackDefault(
-      buildFullQualitySelectorList(merged),
-    );
+    let variants = buildFullQualitySelectorList(merged);
+    if (options?.avoidSplitAudioVideo) {
+      const muxed = variants.filter((v) => v.t === "muxed");
+      const split = variants.filter((v) => v.t === "split");
+      variants = [...muxed, ...split];
+    } else {
+      variants = preferPlaybackDefault(variants);
+    }
     return {
       kind: "progressive",
       variants,

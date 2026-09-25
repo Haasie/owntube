@@ -6,6 +6,7 @@ import {
   toProxiedOrDirectPoster,
   toProxiedOrDirectVariants,
 } from "@/lib/invidious-proxy";
+import { isIosLikeBrowser } from "@/lib/ios-playback";
 import { getMediaOrigin } from "@/lib/media-origin";
 import { buildWatchPlayback } from "@/lib/pick-playback";
 import type { VideoDetail } from "@/server/services/proxy.types";
@@ -26,7 +27,9 @@ export function buildClientWatchPlayback(
   const appOrigin = window.location.origin;
   const mediaOrigin = getMediaOrigin(appOrigin);
   const requestHost = window.location.host;
-  const rawPlayback = buildWatchPlayback(detail);
+  const rawPlayback = buildWatchPlayback(detail, {
+    avoidSplitAudioVideo: isIosLikeBrowser(),
+  });
   const onlyDashOrUnsupported =
     rawPlayback.kind === "none" && rawPlayback.onlyDashOrUnsupported;
   const videoPayload =
