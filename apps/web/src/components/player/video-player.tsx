@@ -47,6 +47,7 @@ import {
   heightCapForDefaultQuality,
   readDefaultPlaybackQuality,
 } from "@/lib/default-playback-quality";
+import { prefersMuxedForAirPlaySafety } from "@/lib/ios-playback";
 import { isLiveDashManifestUrl } from "@/lib/pick-playback";
 import { nextPlaybackVariantIndex } from "@/lib/playback-variant-fallback";
 import {
@@ -55,7 +56,6 @@ import {
 } from "@/lib/player-media-prefs";
 import type { SponsorBlockPrefs } from "@/lib/sponsorblock-prefs";
 import { cn } from "@/lib/utils";
-import { isIosLikeBrowser } from "@/lib/ios-playback";
 import type { VideoChapter } from "@/lib/video-chapters";
 import { videoIdFromWatchHref } from "@/lib/yt-routes";
 import type { VideoStoryboard } from "@/server/services/proxy.types";
@@ -495,13 +495,14 @@ export function VideoPlayer({
       if (currentTime > 0) {
         setResumeSeekSeconds(currentTime);
       }
-      // On iOS, split video+audio (separate <video muted> + <audio>) drifts
-      // apart during AirPlay / Screen Mirroring ("synchrone weergave"):
-      // the two elements are buffered independently over the wireless link
-      // and diverge by hundreds of ms. Prefer muxed (single-container,
-      // physically sync-guaranteed) even though max resolution is lower.
+      // On any WebKit browser that can AirPlay (iOS/iPadOS or desktop macOS
+      // Safari), split video+audio (separate <video muted> + <audio>) drifts
+      // apart during AirPlay / Screen Mirroring: the two elements are
+      // buffered independently over the wireless link and diverge by
+      // hundreds of ms. Prefer muxed (single-container, physically
+      // sync-guaranteed) even though max resolution is lower.
       let fallbackVariants = effectivePayload.progressiveFallback;
-      if (isIosLikeBrowser()) {
+      if (prefersMuxedForAirPlaySafety()) {
         const muxed = fallbackVariants.filter((v) => v.t === "muxed");
         if (muxed.length > 0) {
           fallbackVariants = [

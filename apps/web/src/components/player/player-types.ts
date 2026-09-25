@@ -39,6 +39,10 @@ export type PlayerAdapter = {
   togglePictureInPicture(): void;
   canAirPlay?: boolean;
   airPlayActive?: boolean;
+  /** Set when AirPlay is deliberately unavailable (e.g. disableRemotePlayback
+   *  for iOS 17.1+ live streams) — lets the UI explain why instead of just
+   *  hiding the button with no context. */
+  airPlayUnavailableReason?: string;
   showAirPlayPicker?(): void;
 };
 
@@ -66,6 +70,9 @@ export type ChromeProps = SponsorBlockChromeProps & {
   shortsMode?: boolean;
   miniStartPaused?: boolean;
   isLive?: boolean;
+  /** SplitBlock only: the companion <audio> element isn't part of the AirPlay
+   *  route the <video> picker sets up, so audio stays local while casting. */
+  splitAudioRisksAirPlaySilence?: boolean;
 };
 
 export type HlsBlockProps = SponsorBlockChromeProps & {

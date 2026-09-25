@@ -334,6 +334,12 @@ export function useNativeAdapter(opts: {
     }
     return max;
   })();
+  // useDashPlayback sets `disableRemotePlayback` on iOS 17.1+ live streams
+  // (ManagedMediaSource can't stream to AirPlay) — surface *why* the button
+  // is gone instead of silently never showing it.
+  const airPlayUnavailableReason = v?.disableRemotePlayback
+    ? "AirPlay isn't available for this live stream on this device."
+    : undefined;
 
   return {
     paused: v?.paused ?? true,
@@ -478,6 +484,7 @@ export function useNativeAdapter(opts: {
     },
     canAirPlay,
     airPlayActive,
+    airPlayUnavailableReason,
     showAirPlayPicker: () => {
       const el = videoRef.current as (HTMLVideoElement & {
         webkitShowPlaybackTargetPicker?: () => void;

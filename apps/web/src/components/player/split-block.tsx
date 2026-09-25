@@ -535,6 +535,7 @@ export function SplitBlock({
         shortsMode={shortsMode}
         miniStartPaused={miniStartPaused}
         isLive={isLive}
+        splitAudioRisksAirPlaySilence
       />
     </div>
   );

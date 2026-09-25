@@ -656,6 +656,9 @@ export function ProgressBar({
       <div
         className={cn(
           "pointer-events-none absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-0 shadow ring-2 ring-black/40 transition-opacity group-hover/scrub:opacity-100",
+          // :hover never tracks an active touch drag (no mouse on iPad/iPhone),
+          // so without this the handle stays invisible for the whole gesture.
+          dragging && "opacity-100",
           playedClass,
         )}
         style={{ left: `${pct(current)}%` }}
@@ -810,7 +813,7 @@ export function ShortsTopControls({
         <button
           type="button"
           onClick={() => adapter.toggleMuted()}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white transition hover:bg-black/60"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white transition hover:bg-black/60"
           aria-label={adapter.muted ? "Unmute" : "Mute"}
         >
           {levelUi < 0.01 ? (

@@ -79,6 +79,7 @@ export function PlayerChrome({
   shortsMode = false,
   miniStartPaused = false,
   isLive = false,
+  splitAudioRisksAirPlaySilence = false,
 }: ChromeProps) {
   const [hydrated, setHydrated] = useState(false);
   const { active: fsActive, toggle: toggleFs } = useFullscreenShell(shellRef);
@@ -87,6 +88,33 @@ export function PlayerChrome({
   const [showVolPanel, setShowVolPanel] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [airPlaySplitNotice, setAirPlaySplitNotice] = useState(false);
+  const airPlaySplitNoticeTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  // Split playback's companion <audio> element never joins the AirPlay route
+  // the <video> picker sets up, so casting sends silent picture. Call the
+  // picker first (must stay synchronous with the click — WebKit invalidates
+  // the gesture token otherwise), then surface an honest, transient notice.
+  const showAirPlayPickerWithSplitNotice = () => {
+    adapter.showAirPlayPicker?.();
+    if (!splitAudioRisksAirPlaySilence) return;
+    if (airPlaySplitNoticeTimerRef.current) {
+      clearTimeout(airPlaySplitNoticeTimerRef.current);
+    }
+    setAirPlaySplitNotice(true);
+    airPlaySplitNoticeTimerRef.current = setTimeout(() => {
+      setAirPlaySplitNotice(false);
+      airPlaySplitNoticeTimerRef.current = null;
+    }, 6000);
+  };
+  useEffect(() => {
+    return () => {
+      if (airPlaySplitNoticeTimerRef.current) {
+        clearTimeout(airPlaySplitNoticeTimerRef.current);
+      }
+    };
+  }, []);
   const [autoCenterHint, setAutoCenterHint] = useState<{
     kind: "play" | "pause";
     tick: number;
@@ -248,6 +276,19 @@ export function PlayerChrome({
       />
 
       <CaptionOverlay text={captionText} raised={chromeShown} />
+
+      {airPlaySplitNotice ? (
+        <div className="pointer-events-none absolute inset-x-0 top-4 z-40 flex justify-center px-4">
+          {/* biome-ignore lint/a11y/useSemanticElements: transient status text, not a form/alert widget */}
+          <div
+            role="status"
+            className="max-w-[90%] rounded-full bg-black/80 px-4 py-2 text-center text-xs text-white shadow-lg sm:text-sm"
+          >
+            Picture is casting to AirPlay — audio for this track stays on this
+            device.
+          </div>
+        </div>
+      ) : null}
 
       {/* On-video scrub preview: while actively dragging the scrubber, the frame
           fills the whole video area (YouTube-style) with the target time floated
@@ -451,7 +492,7 @@ export function PlayerChrome({
                     aria-label={a.label}
                     title={a.label}
                     className={cn(
-                      "flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-black/60",
+                      "flex h-10 w-10 items-center justify-center rounded-full text-white transition hover:bg-black/60",
                       a.active ? "bg-black/60" : "bg-black/40",
                     )}
                   >
@@ -535,7 +576,7 @@ export function PlayerChrome({
               <button
                 type="button"
                 onClick={() => adapter.togglePaused()}
-                className="hidden h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex"
+                className="hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex"
                 aria-label={adapter.paused ? "Play" : "Pause"}
               >
                 {adapter.paused ? (
@@ -556,7 +597,7 @@ export function PlayerChrome({
                 <button
                   type="button"
                   onClick={() => adapter.toggleMuted()}
-                  className="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15"
+                  className="flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15"
                   aria-label={adapter.muted ? "Unmute" : "Mute"}
                 >
                   {levelUi < 0.01 ? (
@@ -648,7 +689,7 @@ export function PlayerChrome({
                   <button
                     type="button"
                     onClick={onPlayNext}
-                    className="hidden h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex"
+                    className="hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex"
                     aria-label="Play next video"
                     title={nextUp.title}
                   >
@@ -702,7 +743,7 @@ export function PlayerChrome({
                     captions.setActive(captions.activeIndex === null ? 0 : null)
                   }
                   className={cn(
-                    "hidden h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex",
+                    "hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex",
                     captions.activeIndex !== null
                       ? "bg-white/15 text-white"
                       : "",
@@ -721,7 +762,7 @@ export function PlayerChrome({
                     type="button"
                     onClick={() => onSettingsOpenChange(!settingsOpen)}
                     className={cn(
-                      "flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15",
+                      "flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15",
                       settingsOpen ? "bg-white/15" : "",
                     )}
                     aria-label="Settings"
@@ -739,7 +780,7 @@ export function PlayerChrome({
                   type="button"
                   onClick={() => onToggleCinema()}
                   className={cn(
-                    "hidden h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex",
+                    "hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex",
                     cinemaMode ? "bg-white/15 text-white" : "",
                   )}
                   aria-label={
@@ -756,7 +797,7 @@ export function PlayerChrome({
                 <button
                   type="button"
                   onClick={() => setMobileMenuOpen(true)}
-                  className="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15 sm:hidden"
+                  className="flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15 sm:hidden"
                   aria-label="More controls"
                   aria-haspopup="dialog"
                   aria-expanded={mobileMenuOpen}
@@ -778,7 +819,7 @@ export function PlayerChrome({
                 <button
                   type="button"
                   onClick={() => void toggleFs()}
-                  className="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15"
+                  className="flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15"
                   aria-label={fsActive ? "Exit fullscreen" : "Enter fullscreen"}
                 >
                   {fsActive ? (
@@ -794,7 +835,7 @@ export function PlayerChrome({
                   type="button"
                   onClick={() => adapter.togglePictureInPicture()}
                   className={cn(
-                    "flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15",
+                    "flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15",
                     adapter.pictureInPicture ? "bg-white/15" : "",
                   )}
                   aria-label={
@@ -810,9 +851,9 @@ export function PlayerChrome({
               {hydrated && adapter.canAirPlay ? (
                 <button
                   type="button"
-                  onClick={() => adapter.showAirPlayPicker?.()}
+                  onClick={showAirPlayPickerWithSplitNotice}
                   className={cn(
-                    "flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15",
+                    "flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15",
                     adapter.airPlayActive
                       ? "bg-white/15 text-[hsl(var(--primary))]"
                       : "",
@@ -822,6 +863,16 @@ export function PlayerChrome({
                       ? "AirPlay active (connected)"
                       : "AirPlay"
                   }
+                >
+                  <AirPlayIcon className="h-5 w-5" />
+                </button>
+              ) : hydrated && adapter.airPlayUnavailableReason ? (
+                <button
+                  type="button"
+                  disabled
+                  title={adapter.airPlayUnavailableReason}
+                  aria-label={adapter.airPlayUnavailableReason}
+                  className="flex h-10 w-10 cursor-not-allowed items-center justify-center rounded-full opacity-40"
                 >
                   <AirPlayIcon className="h-5 w-5" />
                 </button>
@@ -852,7 +903,8 @@ export function PlayerChrome({
           onTogglePip={() => adapter.togglePictureInPicture()}
           canAirPlay={Boolean(adapter.canAirPlay)}
           airPlayActive={Boolean(adapter.airPlayActive)}
-          onShowAirPlayPicker={() => adapter.showAirPlayPicker?.()}
+          airPlayUnavailableReason={adapter.airPlayUnavailableReason}
+          onShowAirPlayPicker={showAirPlayPickerWithSplitNotice}
         />
       ) : null}
 
@@ -898,6 +950,7 @@ function PlayerMobileMenu({
   onTogglePip,
   canAirPlay = false,
   airPlayActive = false,
+  airPlayUnavailableReason,
   onShowAirPlayPicker,
   open,
   onOpenChange,
@@ -917,6 +970,7 @@ function PlayerMobileMenu({
   onTogglePip: () => void;
   canAirPlay?: boolean;
   airPlayActive?: boolean;
+  airPlayUnavailableReason?: string;
   onShowAirPlayPicker?: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -934,7 +988,7 @@ function PlayerMobileMenu({
       panelClassName="border-white/10 bg-zinc-950/95 text-zinc-100 backdrop-blur-md"
       contentClassName="text-sm"
     >
-      {nextUp || canPip || canAirPlay ? (
+      {nextUp || canPip || canAirPlay || airPlayUnavailableReason ? (
         <div className="px-1 py-1">
           {nextUp ? (
             <>
@@ -1014,10 +1068,24 @@ function PlayerMobileMenu({
                 {airPlayActive ? "Connected" : "Connect"}
               </span>
             </button>
+          ) : airPlayUnavailableReason ? (
+            <div
+              className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-zinc-500"
+              title={airPlayUnavailableReason}
+            >
+              <span>AirPlay</span>
+              <span className="text-xs">Unavailable</span>
+            </div>
           ) : null}
         </div>
       ) : null}
-      <div className={nextUp || canPip || canAirPlay ? "border-t border-white/10" : ""}>
+      <div
+        className={
+          nextUp || canPip || canAirPlay || airPlayUnavailableReason
+            ? "border-t border-white/10"
+            : ""
+        }
+      >
         <SettingsMenu
           variant="embedded"
           quality={quality}

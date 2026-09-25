@@ -28,6 +28,7 @@ import {
   toProxiedOrDirectPoster,
   toProxiedOrDirectVariants,
 } from "@/lib/invidious-proxy";
+import { prefersMuxedForAirPlaySafety } from "@/lib/ios-playback";
 import { getMediaOrigin } from "@/lib/media-origin";
 import { buildWatchPlayback } from "@/lib/pick-playback";
 import { scrubPreviewStreamFromDetail } from "@/lib/scrub-preview-stream";
@@ -223,7 +224,18 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
       .slice(0, 20);
     sidebarFromFeedFallback = sidebarVideos.length > 0;
   }
-  const rawPlayback = detail ? buildWatchPlayback(detail) : null;
+  const rawPlayback = detail
+    ? buildWatchPlayback(detail, {
+        // Server-side UA sniff (no touch-points signal available here, so
+        // iPadOS-as-Mac isn't detected — the client-side re-check in
+        // VideoPlayer's HLS-failure fallback covers that case). Split
+        // video+audio drifts out of sync once AirPlaying to an Apple TV, so
+        // prefer muxed by default on every WebKit browser that can AirPlay.
+        avoidSplitAudioVideo: prefersMuxedForAirPlaySafety(
+          h.get("user-agent") ?? undefined,
+        ),
+      })
+    : null;
   const onlyDashOrUnsupported =
     rawPlayback !== null &&
     rawPlayback.kind === "none" &&
