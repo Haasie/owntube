@@ -115,6 +115,18 @@ export function LiveBlock({
     if (!adapter.canPlay || !adapter.paused) return;
     liveAutoplayTriedRef.current = true;
     adapter.play();
+    // adapter.play() is fire-and-forget, so a blocked unmuted autoplay (iOS
+    // Safari without a very recent gesture) can't be caught directly here —
+    // check back shortly and fall back to muted so the broadcast actually
+    // starts instead of sitting paused; the viewer can unmute once it's going.
+    const id = window.setTimeout(() => {
+      const v = videoRef.current;
+      if (v && v.paused && !v.muted) {
+        v.muted = true;
+        void v.play().catch(() => {});
+      }
+    }, 500);
+    return () => window.clearTimeout(id);
   }, [adapter.canPlay, adapter.paused, adapter.play, reactKey]);
 
   return (

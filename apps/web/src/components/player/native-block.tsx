@@ -134,11 +134,14 @@ export function NativeMuxedBlock({
   // Always mute for the autoplay attempt in shorts — unmuted autoplay is
   // blocked on a fresh element even after interaction. Sound (if the viewer
   // wants it) is restored by useShortsUnmuteAfterPlay once playback starts.
+  // Regular watch-page autoplay is included too (falls back to muted only if
+  // the browser rejects unmuted — see useShortsNativeAutoplay) since the bare
+  // `autoPlay` attribute below has no such fallback and silently stays paused.
   useShortsNativeAutoplay(
     videoRef,
     // Only the ACTIVE short plays; a pre-warmed adjacent one attaches + buffers
     // but stays paused until it becomes active.
-    (shortsMode && shortsActive) || miniShouldAutoplay,
+    (shortsMode && shortsActive) || miniShouldAutoplay || autoplay,
     reactKey,
     shortsMode || miniShouldAutoplay,
   );

@@ -105,7 +105,20 @@ export function useHlsVodPlayback(
       // it from 0 (the "finished video replays itself" bug — canplay refires
       // around the ended transition and re-triggered this retry).
       if (v.ended) return;
-      if (v.paused) void v.play().catch(() => {});
+      if (!v.paused) return;
+      void v.play().catch(() => {
+        // Unmuted autoplay is blocked by the browser (iOS Safari always
+        // blocks it without a very recent user gesture) — without this the
+        // video just sits paused at 0:00 until the viewer happens to touch
+        // the player themselves. Retry muted, which is always allowed; the
+        // adapter's volumechange listener picks up el.muted and shows the
+        // unmute affordance, so the viewer can turn sound back on in one tap.
+        if (started || v.muted) return;
+        v.muted = true;
+        void v.play().catch(() => {
+          /* retried by the poll/events below */
+        });
+      });
     };
     play();
     v.addEventListener("playing", markStarted);

@@ -56,7 +56,16 @@ export function useMiniPlayerMediaBootstrap(
   ]);
 }
 
-/** Autoplay for Shorts / mini on native <video> (muxed + split). */
+/**
+ * Autoplay for Shorts / mini / regular-watch on native <video> (muxed + split).
+ * `muteForAutoplayPolicy` forces muted from the first attempt (Shorts, where
+ * autoplay must never audibly fail). Everywhere else, the first attempt tries
+ * the viewer's actual volume; if the browser blocks unmuted autoplay (iOS
+ * Safari always does without a very recent gesture), it retries muted so
+ * playback actually starts instead of sitting paused at 0:00 indefinitely —
+ * the adapter's volumechange listener picks up `el.muted` and shows the
+ * unmute affordance, so the viewer can turn sound back on in one tap.
+ */
 export function useShortsNativeAutoplay(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   enabled: boolean,
@@ -75,7 +84,11 @@ export function useShortsNativeAutoplay(
       if (startedOnce || !el.paused || el.ended) return;
       if (muteForAutoplayPolicy) el.muted = true;
       void el.play().catch(() => {
-        /* autoplay policy — retried by the poll/events below */
+        if (startedOnce || el.muted) return;
+        el.muted = true;
+        void el.play().catch(() => {
+          /* autoplay policy — retried by the poll/events below */
+        });
       });
     };
 
