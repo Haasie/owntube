@@ -177,6 +177,9 @@ export function useDashPlayback(
     let player: MediaPlayerClass | null = null;
     let portalObserver: ResizeObserver | null = null;
     let onFullscreenChange: (() => void) | null = null;
+    // Debounce timer after a seek (set deep in the async setup below); hoisted
+    // here so the effect's cleanup can clear it on unmount mid-debounce.
+    let jumpTimer: number | null = null;
     const mediaOrigin = getMediaOrigin(getClientAppOrigin());
     const releaseFetchGuard = installSameOriginMediaFetchGuard(mediaOrigin);
     // The VOD seek/switch tricks below replace already-buffered media; on a
@@ -494,7 +497,6 @@ export function useDashPlayback(
       document.addEventListener("fullscreenchange", handleFullscreenChange);
       onFullscreenChange = handleFullscreenChange;
       let seekActive = false;
-      let jumpTimer: number | null = null;
       player.on("playbackSeeking", () => {
         if (jumpTimer !== null) window.clearTimeout(jumpTimer);
         jumpTimer = null;
@@ -602,6 +604,7 @@ export function useDashPlayback(
 
     return () => {
       cancelled = true;
+      if (jumpTimer !== null) window.clearTimeout(jumpTimer);
       portalObserver?.disconnect();
       if (onFullscreenChange) {
         document.removeEventListener("fullscreenchange", onFullscreenChange);

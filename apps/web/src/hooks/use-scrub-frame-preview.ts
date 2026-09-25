@@ -49,7 +49,20 @@ type GeneratedFrameCache = {
   frames: Map<number, string>;
   frameSize: { width: number; height: number };
   running: boolean;
+  /** True once every consumer of this cache has unmounted — checked between
+   *  capture steps so a background capture stops shortly after the last
+   *  viewer navigates away instead of running to completion regardless. */
+  cancelled: boolean;
+  /** Consumers currently mounted for this (streamSrc, duration) pair — the
+   *  video-player scrub bar and the chapters section can both hold one at
+   *  once, so cancellation only fires once the count reaches zero. */
+  refCount: number;
 };
+
+/** Caps how many distinct (streamSrc, duration) frame sets stay in memory —
+ *  without this, a long browsing session across many storyboard-less videos
+ *  grows this module-level cache unbounded. */
+const MAX_GENERATED_FRAME_CACHES = 6;
 
 const generatedFrameCaches = new Map<string, GeneratedFrameCache>();
 const generatedFrameTickListeners = new Set<() => void>();
@@ -86,13 +99,24 @@ function getGeneratedFrameCache(
 ): GeneratedFrameCache {
   const key = generatedFrameCacheKey(streamSrc, durationSeconds);
   let cache = generatedFrameCaches.get(key);
-  if (!cache) {
-    cache = {
-      frames: new Map(),
-      frameSize: { width: 160, height: 90 },
-      running: false,
-    };
+  if (cache) {
+    // Re-insert so Map iteration order tracks recency for the eviction below.
+    generatedFrameCaches.delete(key);
     generatedFrameCaches.set(key, cache);
+    return cache;
+  }
+  cache = {
+    frames: new Map(),
+    frameSize: { width: 160, height: 90 },
+    running: false,
+    cancelled: false,
+    refCount: 0,
+  };
+  generatedFrameCaches.set(key, cache);
+  while (generatedFrameCaches.size > MAX_GENERATED_FRAME_CACHES) {
+    const oldestKey = generatedFrameCaches.keys().next().value;
+    if (oldestKey === undefined) break;
+    generatedFrameCaches.delete(oldestKey);
   }
   return cache;
 }
@@ -106,6 +130,22 @@ function useGeneratedScrubFrameAt(
     getGeneratedFrameTickSnapshot,
     getGeneratedFrameTickSnapshot,
   );
+
+  // Track this consumer against the shared cache so a background capture
+  // stops once the last viewer (scrub bar, chapters section) unmounts —
+  // otherwise switching videos mid-capture leaves it seeking through the
+  // abandoned stream in the background, competing for bandwidth with the
+  // newly loaded one.
+  useEffect(() => {
+    if (!streamSrc || !durationSeconds || durationSeconds <= 0) return;
+    const cache = getGeneratedFrameCache(streamSrc, durationSeconds);
+    cache.refCount += 1;
+    cache.cancelled = false;
+    return () => {
+      cache.refCount -= 1;
+      if (cache.refCount <= 0) cache.cancelled = true;
+    };
+  }, [streamSrc, durationSeconds]);
 
   const capture = useCallback(async () => {
     if (!streamSrc || !durationSeconds || durationSeconds <= 0) return;
@@ -137,6 +177,7 @@ function useGeneratedScrubFrameAt(
 
     try {
       await waitLoaded;
+      if (cache.cancelled) return;
       const vw = Math.max(1, Math.floor(video.videoWidth || 160));
       const vh = Math.max(1, Math.floor(video.videoHeight || 90));
       const targetWidth = 160;
@@ -147,6 +188,7 @@ function useGeneratedScrubFrameAt(
 
       const markers = scrubFrameMarkers(durationSeconds, 5);
       for (const marker of markers) {
+        if (cache.cancelled) break;
         const seekTo = Math.max(0, Math.min(marker, durationSeconds - 0.05));
         await new Promise<void>((resolve) => {
           const done = () => resolve();

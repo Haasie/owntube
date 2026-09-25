@@ -345,6 +345,9 @@ export function useHlsVodPlayback(
       releaseFetchGuard();
       hls?.destroy();
       hlsRef.current = null;
+      // Only attached when hls.js isn't supported (native-HLS-less browser
+      // fallback) — harmless no-op otherwise since it was never added.
+      video.removeEventListener("loadedmetadata", applyStartAndPlay);
       const v = videoRef.current;
       if (v) {
         v.removeAttribute("src");

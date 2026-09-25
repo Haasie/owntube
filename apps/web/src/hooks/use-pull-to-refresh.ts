@@ -55,6 +55,12 @@ export function usePullToRefresh({
     pullStartY.current = null;
     setPull(0);
   }, [pull, onRefresh]);
+  // A cancelled gesture (system edge-swipe, incoming call) isn't a completed
+  // pull — just reset, don't fire onRefresh even past threshold.
+  const onTouchCancel = useCallback(() => {
+    pullStartY.current = null;
+    setPull(0);
+  }, []);
 
   return {
     pull,
@@ -63,7 +69,7 @@ export function usePullToRefresh({
       onTouchStart,
       onTouchMove,
       onTouchEnd,
-      onTouchCancel: onTouchEnd,
+      onTouchCancel,
     },
   };
 }
