@@ -22,7 +22,7 @@ export type FeedItem = {
 
 export type FeedSnapshot = {
   kind: string;
-  /** Basic-Auth username whose credentials unlock this feed. */
+  /** Username whose secret feed address unlocks this feed. */
   owner: string;
   slug: string;
   title: string;

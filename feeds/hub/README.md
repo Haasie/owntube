@@ -10,10 +10,9 @@ get new feed content pushed within seconds of a change instead of polling.
   addresses. Topics must be on a host listed in `HUB_TOPIC_HOSTS`.
 - **Publish** — only the feeds server, with `Authorization: Bearer
   $HUB_PUBLISH_TOKEN`, one `hub.url` per changed feed.
-- **Per-user topics** — topic URLs carry the feed's credentials
-  (`https://user:pass@owntube.nedworks.org/rss/...`). The hub fetches each
-  subscription's topic with its own credentials, and matches announcements
-  (`https://user@...`, no password) on username + URL.
+- **Per-user topics** — OwnTube's topic URLs are each user's secret feed
+  address (`https://owntube.nedworks.org/rss/<token>/...`, see
+  `feeds/server/README.md`), unique per user, matched exactly.
 - **DNS rebinding** — the hub's outbound requests to callbacks (verification
   and delivery) are made with a fetch that re-checks every resolved address
   at connect time, so a callback host can't pass the public-address check and
@@ -21,13 +20,8 @@ get new feed content pushed within seconds of a change instead of polling.
   use a plain fetch instead: topic hosts are operator-configured
   (`HUB_TOPIC_HOSTS`), not supplied by a subscriber, so they need no guard.
 
-With the hub on, a feed's own `<atom:link rel="self">` carries the requesting
-user's full credentials (`https://user:pass@.../rss/...`) — it *is* the WebSub
-topic the hub fetches, so it has to be exact. Podcast apps that display or
-share "the feed URL" will therefore show the password. That's accepted: it's
-the same URL the user already pasted into the app to subscribe (see
-`feeds/server/README.md`), so nothing new is exposed — it's just visible in
-one more place.
+With the hub on, a feed's own `<atom:link rel="self">` is that exact secret
+address — it *is* the WebSub topic the hub fetches, so it has to be exact.
 
 | Variable | Purpose |
 |---|---|

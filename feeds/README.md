@@ -4,7 +4,7 @@ Podcast feeds for OwnTube, in two halves that talk over one HTTP call.
 
 ```
 web app (home) ──POST /publish (Bearer)──▶ server (public: owntube.nedworks.org)
-                                               │  ├── /<feed>.rss        Basic Auth, per user
+                                               │  ├── /rss/<token>/<feed>.rss  secret address, per user
                                                │  ├── /chapters/<id>.json public
                                                │  └── /icon.png          public (cover art)
                                                │
@@ -25,7 +25,7 @@ changed; the hub pushes them to subscribed podcast platforms. See `hub/README.md
 is given and renders RSS from it. It runs on a public host precisely because
 podcast apps and directories cannot reach the LAN — and it serves chapters and
 cover art unauthenticated for the same reason, since clients fetch those bare,
-without the feed's credentials.
+without the feed's secret address.
 
 **YouTube WebSub** rides the same pair, in the other direction. The server is
 also a WebSub *subscriber* for YouTube uploads — Google's hub can only push to a

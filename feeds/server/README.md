@@ -3,12 +3,12 @@
 A tiny public RSS mirror for a LAN-only OwnTube. The home OwnTube **pushes**
 self-contained feed snapshots here; this service stores them and renders podcast
 RSS. Every `<enclosure>` URL points back at the LAN media origin
-(`/media/<id>.m4a` / `.mp4`), so the feed *metadata* is public (behind Basic
-Auth) while the media only streams on the LAN.
+(`/media/<id>.m4a` / `.mp4`), so the feed *metadata* is public (behind an
+unguessable per-user secret address) while the media only streams on the LAN.
 
 ```
 web app      ──POST /publish (Bearer)──▶ feeds server (spiff, owntube.nedworks.org)
-                                          └ GET /rss/<kind>/<slug>.{audio,video}.xml  (Basic Auth)
+                                          └ GET /rss/<token>/<kind>/<slug>.{audio,video}.xml
 podcast app ──(LAN/VPN)──▶ owntube /media/<id>   ◀── enclosure URLs
 ```
 
@@ -17,12 +17,8 @@ podcast app ──(LAN/VPN)──▶ owntube /media/<id>   ◀── enclosure U
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | POST | `/publish` | Bearer `PUBLISH_SECRET` + IP allow-list | Replace the full feed + credential set with the pushed payload |
-| GET | `/rss/<kind>/<slug>.audio.xml` | Basic (per user) | Podcast RSS, m4a enclosures |
-| GET | `/rss/<kind>/<slug>.video.xml` | Basic (per user) | Podcast RSS, mp4 enclosures |
-| GET | `/` | Basic (per user) | HTML index of your feeds |
-| GET | `/opml.xml` | Basic (per user) | OPML of your feeds (both variants) |
-| GET | `/rss/<token>/<kind>/<slug>.audio.xml` | secret token | Podcast RSS, m4a enclosures, no password |
-| GET | `/rss/<token>/<kind>/<slug>.video.xml` | secret token | Podcast RSS, mp4 enclosures, no password |
+| GET | `/rss/<token>/<kind>/<slug>.audio.xml` | secret token | Podcast RSS, m4a enclosures |
+| GET | `/rss/<token>/<kind>/<slug>.video.xml` | secret token | Podcast RSS, mp4 enclosures |
 | GET | `/rss/<token>/` | secret token | HTML index of that user's feeds |
 | GET | `/rss/<token>/opml.xml` | secret token | OPML of that user's feeds (both variants) |
 | GET | `/chapters/<videoId>.json` | none | Podcasting 2.0 JSON chapters (public YT-derived data) |
@@ -34,41 +30,13 @@ podcast app ──(LAN/VPN)──▶ owntube /media/<id>   ◀── enclosure U
 
 Feed `kind` ∈ `playlist`, `queue`, `saved`, `subscriptions`, `tag`, `channel`.
 
-Basic Auth is **per user**: the publisher pushes each OwnTube account's
-username (the full email address) and the SHA-256 of its generated RSS
-password (shown in OwnTube → Settings → Podcast feeds) along with the
-snapshots — no plaintext password ever reaches this host. Every feed route
-serves only the authenticated owner's feeds, so two accounts can both have
-`queue`.
-
-Subscribe in a podcast app with the credentials inline (percent-encode the
-`@` in the email; clients that forward it un-decoded still authenticate):
-
-```
-https://user%40example.com:<rss-pass>@owntube.nedworks.org/rss/queue/queue.audio.xml
-```
-
-With a WebSub hub configured (see `feeds/hub/README.md`), each feed's own
-`<atom:link rel="self">` is this exact credentialed URL — but it no longer
-doubles as the WebSub topic the hub fetches: announcing a protected URL would
-hand the hub the owner's password, so hub announcements instead use that
-feed's secret address (see "Secret feed addresses" below). A protected feed
-whose owner has no token yet gets no pushes at all. A podcast app that
-displays or shares "the feed URL" will therefore show the password; that's
-accepted, since it's the same URL the user already pasted in to subscribe.
-
-The `/rss/<kind>/<slug>...`, `/` and `/opml.xml` routes above are unchanged by
-secret addresses — Basic Auth still works exactly as before.
-
 ## Secret feed addresses
 
-Each user can also be issued an opaque per-user token (32 lowercase hex
-chars) that unlocks their feeds with **no password at all**: `/rss/<token>/...`
-mirrors the Basic-Auth routes one-for-one —
-`/rss/<token>/<kind>/<slug>.{audio,video}.xml` for a feed,
-`/rss/<token>/` for the HTML index, `/rss/<token>/opml.xml` for OPML. The
-token is generated and pushed by the publisher (home OwnTube) alongside a
-user's `username`/`passSha256` in the `/publish` payload
+Each user is issued an opaque per-user token (32 lowercase hex chars) that
+unlocks their feeds with no password at all: `/rss/<token>/<kind>/<slug>.{audio,video}.xml`
+for a feed, `/rss/<token>/` for the HTML index, `/rss/<token>/opml.xml` for
+OPML. The token is generated and pushed by the publisher (home OwnTube)
+alongside a user's `username`/`passSha256` in the `/publish` payload
 (`UserCredential.feedToken`); this server only stores and serves it — it never
 mints one.
 
@@ -76,14 +44,20 @@ A request for an unrecognized or malformed token gets a bare `404`, without
 touching the database for anything that doesn't look like a token
 (`/^[0-9a-f]{32}$/`). Every hit — including unknown tokens — is logged with
 only the token's first 6 characters (`012345…`), never the full value, so logs
-can be shared without leaking a live secret address. Responses carry the same
-`cache-control: private, max-age=300` as the Basic-Auth feed routes, since the
-content is just as per-user.
+can be shared without leaking a live secret address. Responses carry
+`cache-control: private, max-age=300`, since the content is per-user.
 
-Because the secret routes need no credentials, they're the ones to hand to a
-podcast app or share as "my feed" — the credentialed `user:pass@host/rss/...`
-form documented above still works, but a secret address never puts a password
-in a URL that a podcast client might log, cache or display.
+Subscribe in a podcast app with the secret address directly — no credentials
+to embed or leak:
+
+```
+https://owntube.nedworks.org/rss/<token>/queue/queue.audio.xml
+```
+
+With a WebSub hub configured (see `feeds/hub/README.md`), each feed's own
+`<atom:link rel="self">` is this exact secret address — it *is* the WebSub
+topic the hub fetches. A feed whose owner has no token yet gets no pushes at
+all.
 
 ## Config (env)
 
@@ -171,16 +145,17 @@ than left to whatever `node` happens to be on PATH.
 Lives at `/var/docker/owntube-feeds-server/` on spiff, fronted by its
 caddy-docker-proxy (`caddy` external network, `caddy` label prefix — see
 `docker-compose.yml`). Public TLS is provisioned automatically by Caddy. The
-feeds server does its own HTTP Basic Auth, so it deliberately does **not** import
-spiff's `auth` (authelia) snippet — a login portal would break podcast-client
-credentials.
+feeds server's routes are unlocked by a per-user secret address (see "Secret
+feed addresses" above), so it deliberately does **not** import spiff's `auth`
+(authelia) snippet — a login portal would break podcast-client subscriptions
+that carry no credentials of their own.
 
 ```sh
 # from the owntube repo on naggon:
 rsync -az --delete --exclude node_modules --exclude data --exclude '*.db*' \
   feeds/server/ root@spiff.nedworks.org:/var/docker/owntube-feeds-server/
 # create /var/docker/owntube-feeds-server/.env on spiff (PUBLISH_SECRET must match
-# the home side's OWNTUBE_PUBLISH_SECRET; feed credentials come with each publish)
+# the home side's OWNTUBE_PUBLISH_SECRET; feed tokens come with each publish)
 ssh root@spiff.nedworks.org 'cd /var/docker/owntube-feeds-server && docker compose up -d --build'
 curl -sf https://owntube.nedworks.org/health   # -> ok
 ```

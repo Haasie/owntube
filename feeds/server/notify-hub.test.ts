@@ -1,17 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { feedTopicUrl, hubTopicUrls, notifyHub } from "./notify-hub.ts";
+import { hubTopicUrls, notifyHub } from "./notify-hub.ts";
 
 const PUBLIC = "https://owntube.example";
 const ALICE_TOKEN = "a".repeat(32);
 const BOB_TOKEN = "b".repeat(32);
-
-test("feedTopicUrl still carries the encoded username, and the password when given (protected self links)", () => {
-  assert.equal(
-    feedTopicUrl(PUBLIC, "m@example.com", "/rss/queue/queue.audio.xml", "p:w"),
-    "https://m%40example.com:p%3Aw@owntube.example/rss/queue/queue.audio.xml",
-  );
-});
 
 test("hubTopicUrls builds the secret address for each variant, no username", () => {
   assert.deepEqual(

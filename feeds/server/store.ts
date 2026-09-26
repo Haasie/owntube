@@ -529,13 +529,6 @@ export class FeedStore {
     };
   }
 
-  getUser(username: string): UserCredential | null {
-    const row = this.db
-      .prepare("SELECT username, pass_sha256 FROM users WHERE username = ?")
-      .get(username) as { username: string; pass_sha256: string } | undefined;
-    return row ? { username: row.username, passSha256: row.pass_sha256 } : null;
-  }
-
   /** Look a user up by their feed token. Rejects malformed tokens without
    * querying, so an obviously-invalid URL never touches the database. */
   getUserByToken(token: string): UserCredential | null {

@@ -40,20 +40,21 @@ test("feeds are scoped per owner; same slug can exist twice", () => {
 
 test("replaceAll prunes feeds and users absent from the payload", () => {
   const { store } = freshStore();
+  const token = "1".repeat(32);
   store.replaceAll(
     [snap("alice", "queue", "queue"), snap("alice", "playlist", "tech")],
-    [{ username: "alice", passSha256: "a".repeat(64) }],
+    [{ username: "alice", passSha256: "a".repeat(64), feedToken: token }],
   );
   store.replaceAll(
     [snap("alice", "queue", "queue")],
-    [{ username: "alice", passSha256: "c".repeat(64) }],
+    [{ username: "alice", passSha256: "c".repeat(64), feedToken: token }],
   );
   assert.equal(store.get("alice", "playlist", "tech"), null);
-  assert.equal(store.getUser("alice")?.passSha256, "c".repeat(64));
+  assert.equal(store.getUserByToken(token)?.passSha256, "c".repeat(64));
 
   store.replaceAll([], []);
   assert.equal(store.list("alice").length, 0);
-  assert.equal(store.getUser("alice"), null);
+  assert.equal(store.getUserByToken(token), null);
 });
 
 test("legacy ownerless table is migrated and orphans pruned on publish", () => {
@@ -226,6 +227,11 @@ test("an existing users table without feed_token is migrated in place", () => {
   );
   db.close();
   const store = new FeedStore(dir);
-  assert.equal(store.getUser("alice")?.passSha256, "a".repeat(64));
   assert.equal(store.tokenFor("alice"), null);
+  const check = new Database(path.join(dir, "feeds.db"));
+  const row = check
+    .prepare("SELECT pass_sha256 FROM users WHERE username = ?")
+    .get("alice") as { pass_sha256: string };
+  check.close();
+  assert.equal(row.pass_sha256, "a".repeat(64));
 });

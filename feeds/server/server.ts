@@ -1,45 +1,43 @@
 /**
  * OwnTube feeds server — the public RSS mirror.
  *
- *   POST /publish                          push feed snapshots + user credentials (Bearer PUBLISH_SECRET)
- *   GET  /rss/<kind>/<slug>.audio.xml      podcast RSS, audio enclosures (Basic Auth)
- *   GET  /rss/<kind>/<slug>.video.xml      podcast RSS, video enclosures (Basic Auth)
- *   GET  /                                 HTML index of your feeds      (Basic Auth)
- *   GET  /opml.xml                         OPML of your feeds            (Basic Auth)
- *   GET  /health                           liveness (no auth)
- *   GET  /websub/callback                  YouTube WebSub subscription verification (no auth; see websub.ts)
- *   POST /websub/callback                  YouTube WebSub upload notification (hub HMAC signature)
- *   POST /websub/sync                      home: set wanted channels, drain events (Bearer PUBLISH_SECRET)
+ *   POST /publish                              push feed snapshots + user credentials (Bearer PUBLISH_SECRET)
+ *   GET  /rss/<token>/<kind>/<slug>.audio.xml  podcast RSS, audio enclosures (secret address)
+ *   GET  /rss/<token>/<kind>/<slug>.video.xml  podcast RSS, video enclosures (secret address)
+ *   GET  /rss/<token>/                         HTML index of that user's feeds (secret address)
+ *   GET  /rss/<token>/opml.xml                 OPML of that user's feeds (secret address)
+ *   GET  /health                               liveness (no auth)
+ *   GET  /websub/callback                      YouTube WebSub subscription verification (no auth; see websub.ts)
+ *   POST /websub/callback                      YouTube WebSub upload notification (hub HMAC signature)
+ *   POST /websub/sync                          home: set wanted channels, drain events (Bearer PUBLISH_SECRET)
  *
- * Basic Auth is per user: the publisher pushes each account's username and the
- * SHA-256 of its generated RSS password alongside the snapshots, and every
- * feed route only serves the authenticated owner's feeds. Feed metadata is
- * public-behind-basic-auth; the `<enclosure>` media only streams on the LAN
- * (that origin is unreachable off-LAN), so putting the creds in a podcast app
- * URL (https://user:pass@host/rss/...) is enough.
+ * Every feed lives at a secret address: an opaque per-user token (see
+ * secret-urls.ts) stands in for a password, so a podcast app URL never
+ * carries credentials. The publisher pushes each account's token alongside
+ * its snapshots, and every secret route only serves that token's owner's
+ * feeds. Feed metadata is public-behind-an-unguessable-token; the
+ * `<enclosure>` media only streams on the LAN (that origin is unreachable
+ * off-LAN).
  *
  * With a WebSub hub configured (HUB_URL/HUB_PUBLISH_TOKEN/PUBLIC_URL), each
- * feed's own `<atom:link rel="self">` is that exact credentialed URL — it is
- * the WebSub topic the hub fetches, so it must be exact. A podcast app that
- * displays or shares "the feed URL" will show the password. This is accepted:
- * it is the same URL the user already pasted into the app to subscribe, so
- * nothing new is exposed by putting it in the self link too.
+ * feed's own `<atom:link rel="self">` is that exact secret address — it is
+ * the WebSub topic the hub fetches, so it must be exact.
  */
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { promises as dns } from "node:dns";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isIpAllowed } from "./ip-allow.ts";
-import { type HubConfig, feedTopicUrl, notifyHub } from "./notify-hub.ts";
+import { type HubConfig, notifyHub } from "./notify-hub.ts";
 import {
   type FeedSnapshot,
   renderRss,
   type Variant,
   xmlEscape,
 } from "./render.ts";
-import { parseSecretPath, redactPath, redactToken, secretFeedPath, TOKEN_RE } from "./secret-urls.ts";
+import { parseSecretPath, redactToken, secretFeedPath, TOKEN_RE } from "./secret-urls.ts";
 import { FeedStore, type UserCredential } from "./store.ts";
 import {
   channelIdFromTopic,
@@ -197,54 +195,6 @@ function checkBearer(req: http.IncomingMessage): boolean {
   return m ? safeEqual(m[1], PUBLISH_SECRET) : false;
 }
 
-const DUMMY_SHA256 = createHash("sha256")
-  .update("feeds-server-dummy")
-  .digest("hex");
-
-/** The authenticated owner and the password they used, or null. Credentials
- * come from the store (pushed by the web app's feed publisher); unknown usernames are
- * compared against a dummy digest so timing doesn't reveal which accounts
- * exist. */
-function checkBasicAuth(
-  req: http.IncomingMessage,
-): { owner: string; password: string } | null {
-  const header = req.headers.authorization ?? "";
-  const m = header.match(/^Basic\s+(.+)$/i);
-  if (!m) return null;
-  let decoded: string;
-  try {
-    decoded = Buffer.from(m[1], "base64").toString("utf8");
-  } catch {
-    return null;
-  }
-  const idx = decoded.indexOf(":");
-  if (idx < 0) return null;
-  const username = decoded.slice(0, idx);
-  const pass = decoded.slice(idx + 1);
-  let user = store.getUser(username);
-  // Usernames are full email addresses, percent-encoded inside feed URLs.
-  // Some podcast clients forward the URL userinfo without decoding it, so a
-  // miss on the raw form retries the decoded one.
-  if (!user && username.includes("%")) {
-    try {
-      user = store.getUser(decodeURIComponent(username));
-    } catch {
-      /* not valid percent-encoding — fall through to the dummy compare */
-    }
-  }
-  const digest = createHash("sha256").update(pass, "utf8").digest("hex");
-  const ok = safeEqual(digest, user?.passSha256 ?? DUMMY_SHA256);
-  return ok && user ? { owner: user.username, password: pass } : null;
-}
-
-function requireBasicAuth(res: http.ServerResponse): void {
-  res.writeHead(401, {
-    "www-authenticate": 'Basic realm="OwnTube", charset="UTF-8"',
-    "content-type": "text/plain; charset=utf-8",
-  });
-  res.end("authentication required\n");
-}
-
 function readBody(
   req: http.IncomingMessage,
   maxBytes = MAX_BODY_BYTES,
@@ -302,10 +252,6 @@ function originOf(req: http.IncomingMessage): string {
     req.headers.host ||
     "";
   return `${proto}://${host}`;
-}
-
-function selfUrl(req: http.IncomingMessage): string {
-  return `${originOf(req)}${req.url ?? ""}`;
 }
 
 function sendXml(res: http.ServerResponse, body: string, status = 200): void {
@@ -563,31 +509,12 @@ async function webSubTick(): Promise<void> {
   }
 }
 
-/** Parse `/rss/<kind>/<slug>.<variant>.xml`. */
-function parseRssPath(
-  pathname: string,
-): { kind: string; slug: string; variant: Variant } | null {
-  const m = pathname.match(/^\/rss\/([^/]+)\/(.+)\.(audio|video)\.xml$/);
-  if (!m) return null;
-  return {
-    kind: decodeURIComponent(m[1]),
-    slug: decodeURIComponent(m[2]),
-    variant: m[3] as Variant,
-  };
-}
-
-function feedUrl(kind: string, slug: string, variant: Variant): string {
-  return `/rss/${encodeURIComponent(kind)}/${encodeURIComponent(slug)}.${variant}.xml`;
-}
-
-type UrlFor = (kind: string, slug: string, variant: Variant) => string;
-
-function renderIndexHtml(owner: string, urlFor: UrlFor, opmlHref: string): string {
+function renderIndexHtml(owner: string, token: string): string {
   const rows = store.list(owner);
   const items = rows
     .map((r) => {
-      const a = urlFor(r.kind, r.slug, "audio");
-      const v = urlFor(r.kind, r.slug, "video");
+      const a = secretFeedPath(token, r.kind, r.slug, "audio");
+      const v = secretFeedPath(token, r.kind, r.slug, "video");
       return `<li><strong>${xmlEscape(r.title)}</strong> <span class="kind">${xmlEscape(r.kind)}</span> · ${r.feed.items.length} items<br><a href="${a}">audio</a> · <a href="${v}">video</a></li>`;
     })
     .join("\n");
@@ -598,17 +525,17 @@ function renderIndexHtml(owner: string, urlFor: UrlFor, opmlHref: string): strin
 h1{font-size:1.4rem}ul{list-style:none;padding:0}li{padding:.6rem 0;border-bottom:1px solid #8883}
 .kind{font-size:.75rem;opacity:.6;text-transform:uppercase}a{margin-right:.3rem}
 @media(prefers-color-scheme:dark){body{background:#111;color:#eee}}</style></head>
-<body><h1>OwnTube feeds</h1><p><a href="${opmlHref}">OPML</a> · ${rows.length} feeds</p>
+<body><h1>OwnTube feeds</h1><p><a href="/rss/${token}/opml.xml">OPML</a> · ${rows.length} feeds</p>
 <ul>\n${items}\n</ul></body></html>\n`;
 }
 
-function renderOpml(req: http.IncomingMessage, owner: string, urlFor: UrlFor): string {
+function renderOpml(req: http.IncomingMessage, owner: string, token: string): string {
   const base = originOf(req);
   const outlines = store
     .list(owner)
     .flatMap((r) =>
       (["audio", "video"] as Variant[]).map((variant) => {
-        const url = `${base}${urlFor(r.kind, r.slug, variant)}`;
+        const url = `${base}${secretFeedPath(token, r.kind, r.slug, variant)}`;
         const text = `${r.title} (${variant})`;
         return `    <outline type="rss" text="${xmlEscape(text)}" title="${xmlEscape(text)}" xmlUrl="${xmlEscape(url)}"/>`;
       }),
@@ -679,34 +606,8 @@ const server = http.createServer((req, res) => {
       }
     }
 
-    // Hand-placed static feeds at unguessable names, no Basic Auth — for
-    // testing how podcast platforms treat an unprotected feed (e.g. whether
-    // they subscribe at the WebSub hub). Files live in <DATA_DIR>/public/.
-    if (method === "GET" || method === "HEAD") {
-      const pub = pathname.match(/^\/public\/([A-Za-z0-9_-]{24,64})\.xml$/);
-      if (pub) {
-        logLine(
-          `rss ${method} /public/${pub[1].slice(0, 6)}….xml public ip=${clientIp(req)} ua=${JSON.stringify(req.headers["user-agent"] ?? "")}`,
-        );
-        let body: Buffer;
-        try {
-          body = fs.readFileSync(path.join(DATA_DIR, "public", `${pub[1]}.xml`));
-        } catch {
-          res.writeHead(404, { "content-type": "text/plain" });
-          res.end("not found\n");
-          return;
-        }
-        res.writeHead(200, {
-          "content-type": "application/rss+xml; charset=utf-8",
-          "cache-control": "private, max-age=60",
-        });
-        res.end(method === "HEAD" ? undefined : body);
-        return;
-      }
-    }
-
-    // Secret feed addresses: a per-user token stands in for Basic Auth, so a
-    // podcast app URL never carries a password. See secret-urls.ts.
+    // Secret feed addresses: a per-user token unlocks that user's feeds with
+    // no password at all. See secret-urls.ts.
     if (method === "GET" || method === "HEAD") {
       const secret = parseSecretPath(pathname);
       if (secret) {
@@ -720,7 +621,6 @@ const server = http.createServer((req, res) => {
           return;
         }
         const owner = user.username;
-        const urlFor: UrlFor = (k, s, v) => secretFeedPath(secret.token, k, s, v);
         if ("variant" in secret) {
           const feed = store.get(owner, secret.kind, secret.slug);
           if (!feed) {
@@ -748,14 +648,14 @@ const server = http.createServer((req, res) => {
             // the requesting client, same as the secret feed routes.
             "cache-control": "private, max-age=300",
           });
-          res.end(renderIndexHtml(owner, urlFor, `/rss/${secret.token}/opml.xml`));
+          res.end(renderIndexHtml(owner, secret.token));
           return;
         }
         res.writeHead(200, {
           "content-type": "text/x-opml; charset=utf-8",
           "cache-control": "private, max-age=300",
         });
-        res.end(renderOpml(req, owner, urlFor));
+        res.end(renderOpml(req, owner, secret.token));
         return;
       }
     }
@@ -783,59 +683,6 @@ const server = http.createServer((req, res) => {
     ) {
       await handleWebSubSync(req, res);
       return;
-    }
-
-    // Everything below is Basic-Auth guarded and scoped to the
-    // authenticated user's own feeds.
-    if (method === "GET" || method === "HEAD") {
-      const auth = checkBasicAuth(req);
-      const rss = parseRssPath(pathname);
-      // One line per feed fetch (never the password): shows when podcast
-      // platforms re-read a feed, e.g. before they subscribe at the hub.
-      if (rss) {
-        logLine(
-          `rss ${method} ${redactPath(pathname)} ${auth ? `owner=${auth.owner}` : "unauthorized"} ip=${clientIp(req)} ua=${JSON.stringify(req.headers["user-agent"] ?? "")}`,
-        );
-      }
-      if (!auth) {
-        requireBasicAuth(res);
-        return;
-      }
-      const { owner } = auth;
-
-      if (rss) {
-        const feed = store.get(owner, rss.kind, rss.slug);
-        if (!feed) {
-          res.writeHead(404, { "content-type": "text/plain" });
-          res.end("feed not found\n");
-          return;
-        }
-        // With a hub, the self link is the exact credentialed URL: it is the
-        // WebSub topic, unique per user, and the hub fetches it as-is.
-        const self = hub
-          ? feedTopicUrl(hub.publicUrl, owner, pathname, auth.password)
-          : selfUrl(req);
-        sendXml(
-          res,
-          renderRss(feed, rss.variant, {
-            selfUrl: self,
-            hubUrl: hub ? HUB_URL : undefined,
-          }),
-        );
-        return;
-      }
-
-      if (pathname === "/opml.xml") {
-        res.writeHead(200, { "content-type": "text/x-opml; charset=utf-8" });
-        res.end(renderOpml(req, owner, feedUrl));
-        return;
-      }
-
-      if (pathname === "/") {
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderIndexHtml(owner, feedUrl, "/opml.xml"));
-        return;
-      }
     }
 
     res.writeHead(404, { "content-type": "text/plain" });

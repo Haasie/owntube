@@ -1,12 +1,9 @@
 /**
  * WebSub announcements. Announcements use each feed's secret address (see
- * secret-urls.ts) rather than a credentialed one: the hub fetches whatever it
- * is told to subscribe to, and a protected URL would hand it the owner's
- * password. A feed whose owner has no token yet (none issued) is skipped —
- * there is no secret address to announce.
- *
- * `feedTopicUrl` remains for the protected routes' own self links, which do
- * carry the owner's username (and, for the feed link, their password).
+ * secret-urls.ts): the hub fetches whatever it is told to subscribe to, and
+ * a secret address carries no password to hand it. A feed whose owner has no
+ * token yet (none issued) is skipped — there is no secret address to
+ * announce.
  */
 import { secretFeedPath } from "./secret-urls.ts";
 import type { FeedKey } from "./store.ts";
@@ -18,20 +15,6 @@ export type HubConfig = {
   publishUrl: string;
   token: string;
 };
-
-export function feedTopicUrl(
-  publicUrl: string,
-  owner: string,
-  pathname: string,
-  password?: string,
-): string {
-  const base = new URL(publicUrl);
-  const userinfo =
-    password === undefined
-      ? encodeURIComponent(owner)
-      : `${encodeURIComponent(owner)}:${encodeURIComponent(password)}`;
-  return `${base.protocol}//${userinfo}@${base.host}${pathname}`;
-}
 
 export function hubTopicUrls(publicUrl: string, feed: FeedKey, token: string): string[] {
   const origin = new URL(publicUrl).origin;
