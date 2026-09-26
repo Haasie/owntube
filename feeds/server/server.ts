@@ -708,13 +708,20 @@ const server = http.createServer((req, res) => {
     // authenticated user's own feeds.
     if (method === "GET" || method === "HEAD") {
       const auth = checkBasicAuth(req);
+      const rss = parseRssPath(pathname);
+      // One line per feed fetch (never the password): shows when podcast
+      // platforms re-read a feed, e.g. before they subscribe at the hub.
+      if (rss) {
+        logLine(
+          `rss ${method} ${pathname} ${auth ? `owner=${auth.owner}` : "unauthorized"} ip=${clientIp(req)} ua=${JSON.stringify(req.headers["user-agent"] ?? "")}`,
+        );
+      }
       if (!auth) {
         requireBasicAuth(res);
         return;
       }
       const { owner } = auth;
 
-      const rss = parseRssPath(pathname);
       if (rss) {
         const feed = store.get(owner, rss.kind, rss.slug);
         if (!feed) {
