@@ -39,7 +39,7 @@ import {
   type Variant,
   xmlEscape,
 } from "./render.ts";
-import { parseSecretPath, redactToken, secretFeedPath, TOKEN_RE } from "./secret-urls.ts";
+import { parseSecretPath, redactPath, redactToken, secretFeedPath, TOKEN_RE } from "./secret-urls.ts";
 import { FeedStore, type UserCredential } from "./store.ts";
 import {
   channelIdFromTopic,
@@ -728,7 +728,10 @@ const server = http.createServer((req, res) => {
             res.end("feed not found\n");
             return;
           }
-          const self = `${hub?.publicUrl ?? originOf(req)}${secretFeedPath(secret.token, secret.kind, secret.slug, secret.variant)}`;
+          const self = new URL(
+            secretFeedPath(secret.token, secret.kind, secret.slug, secret.variant),
+            hub?.publicUrl ?? originOf(req),
+          ).href;
           sendXml(
             res,
             renderRss(feed, secret.variant, {
@@ -739,11 +742,19 @@ const server = http.createServer((req, res) => {
           return;
         }
         if (secret.page === "index") {
-          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          res.writeHead(200, {
+            "content-type": "text/html; charset=utf-8",
+            // Every link on the page embeds the token: never cache beyond
+            // the requesting client, same as the secret feed routes.
+            "cache-control": "private, max-age=300",
+          });
           res.end(renderIndexHtml(owner, urlFor, `/rss/${secret.token}/opml.xml`));
           return;
         }
-        res.writeHead(200, { "content-type": "text/x-opml; charset=utf-8" });
+        res.writeHead(200, {
+          "content-type": "text/x-opml; charset=utf-8",
+          "cache-control": "private, max-age=300",
+        });
         res.end(renderOpml(req, owner, urlFor));
         return;
       }
@@ -783,7 +794,7 @@ const server = http.createServer((req, res) => {
       // platforms re-read a feed, e.g. before they subscribe at the hub.
       if (rss) {
         logLine(
-          `rss ${method} ${pathname} ${auth ? `owner=${auth.owner}` : "unauthorized"} ip=${clientIp(req)} ua=${JSON.stringify(req.headers["user-agent"] ?? "")}`,
+          `rss ${method} ${redactPath(pathname)} ${auth ? `owner=${auth.owner}` : "unauthorized"} ip=${clientIp(req)} ua=${JSON.stringify(req.headers["user-agent"] ?? "")}`,
         );
       }
       if (!auth) {

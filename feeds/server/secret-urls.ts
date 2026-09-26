@@ -67,3 +67,18 @@ export function parseSecretPath(
 export function redactToken(token: string): string {
   return `${token.slice(0, 6)}…`;
 }
+
+/**
+ * Safe-to-log form of a request path: redacts a leading 32-hex token segment
+ * (`/rss/<token>` or `/rss/<token>/...`), leaving everything else — including
+ * a path that merely *looks* like `/rss/<something>` without a real token —
+ * unchanged. Guards against a full token reaching the logs via a path that
+ * isn't a recognized secret address (e.g. a malformed one that falls through
+ * to another route's own logging).
+ */
+export function redactPath(pathname: string): string {
+  return pathname.replace(
+    /^\/rss\/([0-9a-f]{32})(?=\/|$)/,
+    (_, token: string) => `/rss/${redactToken(token)}`,
+  );
+}

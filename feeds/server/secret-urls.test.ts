@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseSecretPath, redactToken, secretFeedPath } from "./secret-urls.ts";
+import { parseSecretPath, redactPath, redactToken, secretFeedPath } from "./secret-urls.ts";
 
 const T = "0123456789abcdef0123456789abcdef";
 
@@ -27,4 +27,14 @@ test("protected paths and malformed tokens are not secret paths", () => {
 
 test("redactToken keeps only a short prefix", () => {
   assert.equal(redactToken(T), "012345…");
+});
+
+test("redactPath redacts a leading token segment, leaves other paths alone", () => {
+  const redacted = redactPath(`/rss/${T}/queue.audio.xml`);
+  assert.equal(redacted, "/rss/012345…/queue.audio.xml");
+  assert.equal(redacted.includes(T), false);
+  assert.equal(redactPath(`/rss/${T}`), "/rss/012345…");
+  assert.equal(redactPath(`/rss/${T}/`), "/rss/012345…/");
+  assert.equal(redactPath("/rss/queue/queue.audio.xml"), "/rss/queue/queue.audio.xml");
+  assert.equal(redactPath(`/rss/${T.slice(1)}/queue.audio.xml`), `/rss/${T.slice(1)}/queue.audio.xml`);
 });
