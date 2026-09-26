@@ -184,3 +184,48 @@ test("replaceAll reports feeds whose content changed, ignoring updatedAt", () =>
     { owner: "alice", kind: "playlist", slug: "tech" },
   ]);
 });
+
+test("feed tokens are stored with the credentials and looked up exactly", () => {
+  const { store } = freshStore();
+  const tokA = "a".repeat(32);
+  store.replaceAll(
+    [snap("alice", "queue", "queue")],
+    [
+      { username: "alice", passSha256: "a".repeat(64), feedToken: tokA },
+      { username: "bob", passSha256: "b".repeat(64) },
+    ],
+  );
+  assert.equal(store.getUserByToken(tokA)?.username, "alice");
+  assert.equal(store.tokenFor("alice"), tokA);
+  assert.equal(store.tokenFor("bob"), null);
+  assert.equal(store.getUserByToken("A".repeat(32)), null);
+  assert.equal(store.getUserByToken("a".repeat(31)), null);
+  assert.equal(store.getUserByToken("b".repeat(32)), null);
+});
+
+test("a new token replaces the old one; a publish without tokens clears them", () => {
+  const { store } = freshStore();
+  const users = (feedToken?: string) => [
+    { username: "alice", passSha256: "a".repeat(64), feedToken },
+  ];
+  store.replaceAll([], users("1".repeat(32)));
+  store.replaceAll([], users("2".repeat(32)));
+  assert.equal(store.getUserByToken("1".repeat(32)), null);
+  assert.equal(store.getUserByToken("2".repeat(32))?.username, "alice");
+  store.replaceAll([], users(undefined));
+  assert.equal(store.tokenFor("alice"), null);
+});
+
+test("an existing users table without feed_token is migrated in place", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "feeds-server-store-"));
+  const db = new Database(path.join(dir, "feeds.db"));
+  db.exec(
+    "CREATE TABLE users (username TEXT PRIMARY KEY, pass_sha256 TEXT NOT NULL, updated_at INTEGER NOT NULL); INSERT INTO users VALUES ('alice', '" +
+      "a".repeat(64) +
+      "', 1)",
+  );
+  db.close();
+  const store = new FeedStore(dir);
+  assert.equal(store.getUser("alice")?.passSha256, "a".repeat(64));
+  assert.equal(store.tokenFor("alice"), null);
+});

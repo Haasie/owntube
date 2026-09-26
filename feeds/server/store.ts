@@ -28,7 +28,12 @@ export type UserCredential = {
   username: string;
   /** SHA-256 hex of the user's RSS password. */
   passSha256: string;
+  /** Opaque token unlocking this user's secret feed URLs, when issued. */
+  feedToken?: string;
 };
+
+/** A feed token is a 32-char lowercase hex string. */
+const FEED_TOKEN_RE = /^[0-9a-f]{32}$/;
 
 export type FeedKey = { owner: string; kind: string; slug: string };
 
@@ -133,6 +138,7 @@ export class FeedStore {
         ON websub_events (video_id, deleted, IFNULL(updated_at, 0))`,
     );
     this.migrateOwnerColumn();
+    this.migrateFeedTokenColumn();
   }
 
   /**
@@ -162,6 +168,20 @@ export class FeedStore {
     );
   }
 
+  /** A pre-secret-feed-urls database has a users table with no feed_token
+   * column. Add it in place, like `migrateOwnerColumn`. */
+  private migrateFeedTokenColumn(): void {
+    const cols = this.db.prepare("PRAGMA table_info(users)").all() as {
+      name: string;
+    }[];
+    if (!cols.some((c) => c.name === "feed_token")) {
+      this.db.exec("ALTER TABLE users ADD COLUMN feed_token TEXT");
+    }
+    this.db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS users_feed_token ON users(feed_token) WHERE feed_token IS NOT NULL",
+    );
+  }
+
   /** Replace the entire published set (feeds and users), atomically. Returns
    * the feeds that are new or whose content changed. */
   replaceAll(
@@ -176,10 +196,11 @@ export class FeedStore {
          title = excluded.title, json = excluded.json, updated_at = excluded.updated_at`,
     );
     const upsertUser = this.db.prepare(
-      `INSERT INTO users (username, pass_sha256, updated_at)
-       VALUES (@username, @passSha256, unixepoch())
+      `INSERT INTO users (username, pass_sha256, feed_token, updated_at)
+       VALUES (@username, @passSha256, @feedToken, unixepoch())
        ON CONFLICT(username) DO UPDATE SET
-         pass_sha256 = excluded.pass_sha256, updated_at = excluded.updated_at`,
+         pass_sha256 = excluded.pass_sha256, feed_token = excluded.feed_token,
+         updated_at = excluded.updated_at`,
     );
     const readJson = this.db.prepare(
       "SELECT json FROM feeds WHERE owner = ? AND kind = ? AND slug = ?",
@@ -220,7 +241,9 @@ export class FeedStore {
             del.run(row.owner, row.kind, row.slug);
           }
         }
-        for (const c of creds) upsertUser.run(c);
+        for (const c of creds) {
+          upsertUser.run({ ...c, feedToken: c.feedToken ?? null });
+        }
         const usernames = new Set(creds.map((c) => c.username));
         const existingUsers = this.db
           .prepare("SELECT username FROM users")
@@ -511,6 +534,33 @@ export class FeedStore {
       .prepare("SELECT username, pass_sha256 FROM users WHERE username = ?")
       .get(username) as { username: string; pass_sha256: string } | undefined;
     return row ? { username: row.username, passSha256: row.pass_sha256 } : null;
+  }
+
+  /** Look a user up by their feed token. Rejects malformed tokens without
+   * querying, so an obviously-invalid URL never touches the database. */
+  getUserByToken(token: string): UserCredential | null {
+    if (!FEED_TOKEN_RE.test(token)) return null;
+    const row = this.db
+      .prepare(
+        "SELECT username, pass_sha256, feed_token FROM users WHERE feed_token = ?",
+      )
+      .get(token) as
+      | { username: string; pass_sha256: string; feed_token: string }
+      | undefined;
+    return row
+      ? {
+          username: row.username,
+          passSha256: row.pass_sha256,
+          feedToken: row.feed_token,
+        }
+      : null;
+  }
+
+  tokenFor(username: string): string | null {
+    const row = this.db
+      .prepare("SELECT feed_token FROM users WHERE username = ?")
+      .get(username) as { feed_token: string | null } | undefined;
+    return row?.feed_token ?? null;
   }
 
   get(owner: string, kind: string, slug: string): FeedSnapshot | null {
