@@ -11,7 +11,11 @@ import {
   watchHistory,
 } from "@/server/db/schema";
 import { clearRecommendationCachesForUser } from "@/server/recommendation/engine";
-import { ensureRssPass, regenerateRssPass } from "@/server/remote/rss-pass";
+import {
+  ensureRssPass,
+  feedToken,
+  regenerateRssPass,
+} from "@/server/remote/rss-pass";
 import {
   clearProxyCaches,
   getInstanceSourceInfo,
@@ -155,18 +159,31 @@ export const settingsRouter = router({
       upsertUserSettings(ctx.db, ctx.userId, input),
     ),
 
-  /** Basic-Auth credentials for the companion's podcast feeds. */
+  /**
+   * The account's secret feed addresses, plus its username/password for the
+   * companion's older, password-protected subscriptions.
+   */
   rssFeeds: protectedProcedure.query(({ ctx }) => {
     const row = ctx.db
       .select({ email: users.email })
       .from(users)
       .where(eq(users.id, ctx.userId))
       .get();
+    const pass = ensureRssPass(ctx.db, ctx.userId);
+    const base = process.env.OWNTUBE_PUBLISH_TARGET?.trim().replace(/\/+$/, "");
+    const token = feedToken(pass);
     return {
       // Full email; URL-encode it when placed inside a feed URL.
       username: row?.email ?? "",
-      pass: ensureRssPass(ctx.db, ctx.userId),
+      pass,
       companionUrl: process.env.OWNTUBE_PUBLISH_TARGET?.trim() || null,
+      feedsUrl: base ? `${base}/rss/${token}/` : null,
+      queueUrls: base
+        ? {
+            audio: `${base}/rss/${token}/queue/queue.audio.xml`,
+            video: `${base}/rss/${token}/queue/queue.video.xml`,
+          }
+        : null,
     };
   }),
 
@@ -218,14 +235,8 @@ export const settingsRouter = router({
         )
         .get();
       if (!row) return none("not-published");
-      const user = ctx.db
-        .select({ email: users.email })
-        .from(users)
-        .where(eq(users.id, ctx.userId))
-        .get();
-      if (!user) return none("not-published");
-      const auth = `${encodeURIComponent(user.email)}:${ensureRssPass(ctx.db, ctx.userId)}`;
-      const feed = `${base.replace(/^(https?:\/\/)/, `$1${auth}@`)}/rss/${encodeURIComponent(input.kind)}/${encodeURIComponent(row.slug)}`;
+      const token = feedToken(ensureRssPass(ctx.db, ctx.userId));
+      const feed = `${base}/rss/${token}/${encodeURIComponent(input.kind)}/${encodeURIComponent(row.slug)}`;
       return {
         audioUrl: `${feed}.audio.xml`,
         videoUrl: `${feed}.video.xml`,

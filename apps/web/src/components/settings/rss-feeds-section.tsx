@@ -5,11 +5,13 @@ import { Button } from "@/components/ui/button";
 import { trpc } from "@/trpc/react";
 
 /**
- * Per-account credentials for the companion's podcast feeds. The username is
- * the account's full email (URL-encoded in feed URLs); the password is
- * generated server-side and only its hash ever reaches the companion.
- * Regeneration takes effect at the next publish cycle, so old app
- * subscriptions keep working briefly.
+ * Secret addresses for the companion's podcast feeds: anyone with a feed's
+ * URL can read it, no password required, so treat them like the private
+ * links they are. Regenerating the password rotates every address (it's
+ * derived from the password) and takes effect at the next publish cycle, so
+ * old subscriptions keep working briefly. The plain username/password pair
+ * still unlocks the companion's own login for feeds published before this
+ * change.
  */
 export function RssFeedsSection() {
   const utils = trpc.useUtils();
@@ -25,16 +27,10 @@ export function RssFeedsSection() {
   });
 
   const creds = query.data;
-  const feedBase = creds?.companionUrl
-    ? creds.companionUrl.replace(
-        /^(https?:\/\/)/,
-        `$1${encodeURIComponent(creds.username)}:${creds.pass}@`,
-      )
-    : null;
-  const queueUrls = feedBase
+  const queueUrls = creds?.queueUrls
     ? ([
-        ["audio", `${feedBase}/rss/queue/queue.audio.xml`],
-        ["video", `${feedBase}/rss/queue/queue.video.xml`],
+        ["audio", creds.queueUrls.audio],
+        ["video", creds.queueUrls.video],
       ] as const)
     : null;
 
@@ -49,34 +45,13 @@ export function RssFeedsSection() {
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">Podcast feeds (RSS)</h2>
       <p className="text-sm text-[hsl(var(--muted-foreground))]">
-        Subscribe to your queue, playlists and channels in a podcast app. Feeds
-        are unlocked by your personal credentials below; media still only plays
-        on the home network.
+        Subscribe to your queue, playlists and channels in a podcast app. Each
+        address below is a private link — anyone who has it can read that feed,
+        so share it only with your own podcast app. Regenerating the password
+        changes every address. Media still only plays on the home network.
       </p>
       {creds ? (
         <div className="space-y-2 text-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[hsl(var(--muted-foreground))]">
-              Username
-            </span>
-            <code className="rounded bg-[hsl(var(--muted))] px-1.5 py-0.5">
-              {creds.username}
-            </code>
-            <span className="text-[hsl(var(--muted-foreground))]">
-              Password
-            </span>
-            <code className="rounded bg-[hsl(var(--muted))] px-1.5 py-0.5">
-              {creds.pass}
-            </code>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => copy("creds", `${creds.username}:${creds.pass}`)}
-            >
-              {copied === "creds" ? "Copied" : "Copy"}
-            </Button>
-          </div>
           {queueUrls
             ? queueUrls.map(([variant, url]) => (
                 <div
@@ -100,20 +75,48 @@ export function RssFeedsSection() {
                 </div>
               ))
             : null}
-          {creds.companionUrl ? (
-            <p className="text-[hsl(var(--muted-foreground))]">
-              All feeds (channels, playlists, saved):{" "}
+          {creds.feedsUrl ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[hsl(var(--muted-foreground))]">
+                All feeds (channels, playlists, saved)
+              </span>
               <a
-                className="underline"
-                href={creds.companionUrl}
+                className="max-w-full truncate underline"
+                href={creds.feedsUrl}
                 target="_blank"
                 rel="noreferrer"
               >
-                {creds.companionUrl}
-              </a>{" "}
-              — sign in with the credentials above.
-            </p>
+                {creds.feedsUrl}
+              </a>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => copy("feeds", creds.feedsUrl ?? "")}
+              >
+                {copied === "feeds" ? "Copied" : "Copy"}
+              </Button>
+            </div>
           ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[hsl(var(--muted-foreground))]">
+              Login for older subscriptions
+            </span>
+            <code className="rounded bg-[hsl(var(--muted))] px-1.5 py-0.5">
+              {creds.username}
+            </code>
+            <code className="rounded bg-[hsl(var(--muted))] px-1.5 py-0.5">
+              {creds.pass}
+            </code>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => copy("creds", `${creds.username}:${creds.pass}`)}
+            >
+              {copied === "creds" ? "Copied" : "Copy"}
+            </Button>
+          </div>
           <div className="flex items-center gap-2">
             {confirmRegenerate ? (
               <>

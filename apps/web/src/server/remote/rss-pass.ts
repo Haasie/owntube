@@ -20,6 +20,15 @@ function generateRssPass(): string {
   return randomBytes(10).toString("hex");
 }
 
+/**
+ * The secret path segment that unlocks a user's feeds without a password.
+ * Derived from the RSS password so regenerating the password also rotates
+ * the token; never store or transmit it separately from that derivation.
+ */
+export function feedToken(rssPass: string): string {
+  return sha256Hex(`owntube-feed-token:${rssPass}`).slice(0, 32);
+}
+
 /** The user's RSS password, generated and persisted on first use. */
 export function ensureRssPass(db: AppDb, userId: number): string {
   const row = db
