@@ -679,6 +679,32 @@ const server = http.createServer((req, res) => {
       }
     }
 
+    // Hand-placed static feeds at unguessable names, no Basic Auth — for
+    // testing how podcast platforms treat an unprotected feed (e.g. whether
+    // they subscribe at the WebSub hub). Files live in <DATA_DIR>/public/.
+    if (method === "GET" || method === "HEAD") {
+      const pub = pathname.match(/^\/public\/([A-Za-z0-9_-]{24,64})\.xml$/);
+      if (pub) {
+        logLine(
+          `rss ${method} /public/${pub[1].slice(0, 6)}….xml public ip=${clientIp(req)} ua=${JSON.stringify(req.headers["user-agent"] ?? "")}`,
+        );
+        let body: Buffer;
+        try {
+          body = fs.readFileSync(path.join(DATA_DIR, "public", `${pub[1]}.xml`));
+        } catch {
+          res.writeHead(404, { "content-type": "text/plain" });
+          res.end("not found\n");
+          return;
+        }
+        res.writeHead(200, {
+          "content-type": "application/rss+xml; charset=utf-8",
+          "cache-control": "private, max-age=60",
+        });
+        res.end(method === "HEAD" ? undefined : body);
+        return;
+      }
+    }
+
     if (method === "POST" && pathname === "/publish") {
       await handlePublish(req, res);
       return;
