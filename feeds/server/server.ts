@@ -39,6 +39,7 @@ import {
   type Variant,
   xmlEscape,
 } from "./render.ts";
+import { parseSecretPath, redactToken, secretFeedPath, TOKEN_RE } from "./secret-urls.ts";
 import { FeedStore, type UserCredential } from "./store.ts";
 import {
   channelIdFromTopic,
@@ -286,11 +287,12 @@ function isUserCredential(v: unknown): v is UserCredential {
     typeof c.username === "string" &&
     c.username.length > 0 &&
     typeof c.passSha256 === "string" &&
-    /^[0-9a-f]{64}$/.test(c.passSha256)
+    /^[0-9a-f]{64}$/.test(c.passSha256) &&
+    (c.feedToken === undefined || (typeof c.feedToken === "string" && TOKEN_RE.test(c.feedToken)))
   );
 }
 
-function selfUrl(req: http.IncomingMessage): string {
+function originOf(req: http.IncomingMessage): string {
   const proto =
     (req.headers["x-forwarded-proto"] as string | undefined)
       ?.split(",")[0]
@@ -299,7 +301,11 @@ function selfUrl(req: http.IncomingMessage): string {
     (req.headers["x-forwarded-host"] as string | undefined) ||
     req.headers.host ||
     "";
-  return `${proto}://${host}${req.url ?? ""}`;
+  return `${proto}://${host}`;
+}
+
+function selfUrl(req: http.IncomingMessage): string {
+  return `${originOf(req)}${req.url ?? ""}`;
 }
 
 function sendXml(res: http.ServerResponse, body: string, status = 200): void {
@@ -574,12 +580,14 @@ function feedUrl(kind: string, slug: string, variant: Variant): string {
   return `/rss/${encodeURIComponent(kind)}/${encodeURIComponent(slug)}.${variant}.xml`;
 }
 
-function renderIndexHtml(owner: string): string {
+type UrlFor = (kind: string, slug: string, variant: Variant) => string;
+
+function renderIndexHtml(owner: string, urlFor: UrlFor, opmlHref: string): string {
   const rows = store.list(owner);
   const items = rows
     .map((r) => {
-      const a = feedUrl(r.kind, r.slug, "audio");
-      const v = feedUrl(r.kind, r.slug, "video");
+      const a = urlFor(r.kind, r.slug, "audio");
+      const v = urlFor(r.kind, r.slug, "video");
       return `<li><strong>${xmlEscape(r.title)}</strong> <span class="kind">${xmlEscape(r.kind)}</span> · ${r.feed.items.length} items<br><a href="${a}">audio</a> · <a href="${v}">video</a></li>`;
     })
     .join("\n");
@@ -590,25 +598,17 @@ function renderIndexHtml(owner: string): string {
 h1{font-size:1.4rem}ul{list-style:none;padding:0}li{padding:.6rem 0;border-bottom:1px solid #8883}
 .kind{font-size:.75rem;opacity:.6;text-transform:uppercase}a{margin-right:.3rem}
 @media(prefers-color-scheme:dark){body{background:#111;color:#eee}}</style></head>
-<body><h1>OwnTube feeds</h1><p><a href="/opml.xml">OPML</a> · ${rows.length} feeds</p>
+<body><h1>OwnTube feeds</h1><p><a href="${opmlHref}">OPML</a> · ${rows.length} feeds</p>
 <ul>\n${items}\n</ul></body></html>\n`;
 }
 
-function renderOpml(req: http.IncomingMessage, owner: string): string {
-  const proto =
-    (req.headers["x-forwarded-proto"] as string | undefined)
-      ?.split(",")[0]
-      ?.trim() || "https";
-  const host =
-    (req.headers["x-forwarded-host"] as string | undefined) ||
-    req.headers.host ||
-    "";
-  const base = `${proto}://${host}`;
+function renderOpml(req: http.IncomingMessage, owner: string, urlFor: UrlFor): string {
+  const base = originOf(req);
   const outlines = store
     .list(owner)
     .flatMap((r) =>
       (["audio", "video"] as Variant[]).map((variant) => {
-        const url = `${base}${feedUrl(r.kind, r.slug, variant)}`;
+        const url = `${base}${urlFor(r.kind, r.slug, variant)}`;
         const text = `${r.title} (${variant})`;
         return `    <outline type="rss" text="${xmlEscape(text)}" title="${xmlEscape(text)}" xmlUrl="${xmlEscape(url)}"/>`;
       }),
@@ -705,6 +705,50 @@ const server = http.createServer((req, res) => {
       }
     }
 
+    // Secret feed addresses: a per-user token stands in for Basic Auth, so a
+    // podcast app URL never carries a password. See secret-urls.ts.
+    if (method === "GET" || method === "HEAD") {
+      const secret = parseSecretPath(pathname);
+      if (secret) {
+        const user = store.getUserByToken(secret.token);
+        logLine(
+          `rss ${method} /rss/${redactToken(secret.token)}/… secret owner=${user?.username ?? "unknown"} ip=${clientIp(req)} ua=${JSON.stringify(req.headers["user-agent"] ?? "")}`,
+        );
+        if (!user) {
+          res.writeHead(404, { "content-type": "text/plain" });
+          res.end("not found\n");
+          return;
+        }
+        const owner = user.username;
+        const urlFor: UrlFor = (k, s, v) => secretFeedPath(secret.token, k, s, v);
+        if ("variant" in secret) {
+          const feed = store.get(owner, secret.kind, secret.slug);
+          if (!feed) {
+            res.writeHead(404, { "content-type": "text/plain" });
+            res.end("feed not found\n");
+            return;
+          }
+          const self = `${hub?.publicUrl ?? originOf(req)}${secretFeedPath(secret.token, secret.kind, secret.slug, secret.variant)}`;
+          sendXml(
+            res,
+            renderRss(feed, secret.variant, {
+              selfUrl: self,
+              hubUrl: hub ? HUB_URL : undefined,
+            }),
+          );
+          return;
+        }
+        if (secret.page === "index") {
+          res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          res.end(renderIndexHtml(owner, urlFor, `/rss/${secret.token}/opml.xml`));
+          return;
+        }
+        res.writeHead(200, { "content-type": "text/x-opml; charset=utf-8" });
+        res.end(renderOpml(req, owner, urlFor));
+        return;
+      }
+    }
+
     if (method === "POST" && pathname === "/publish") {
       await handlePublish(req, res);
       return;
@@ -772,13 +816,13 @@ const server = http.createServer((req, res) => {
 
       if (pathname === "/opml.xml") {
         res.writeHead(200, { "content-type": "text/x-opml; charset=utf-8" });
-        res.end(renderOpml(req, owner));
+        res.end(renderOpml(req, owner, feedUrl));
         return;
       }
 
       if (pathname === "/") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        res.end(renderIndexHtml(owner));
+        res.end(renderIndexHtml(owner, feedUrl, "/opml.xml"));
         return;
       }
     }

@@ -21,6 +21,10 @@ podcast app ──(LAN/VPN)──▶ owntube /media/<id>   ◀── enclosure U
 | GET | `/rss/<kind>/<slug>.video.xml` | Basic (per user) | Podcast RSS, mp4 enclosures |
 | GET | `/` | Basic (per user) | HTML index of your feeds |
 | GET | `/opml.xml` | Basic (per user) | OPML of your feeds (both variants) |
+| GET | `/rss/<token>/<kind>/<slug>.audio.xml` | secret token | Podcast RSS, m4a enclosures, no password |
+| GET | `/rss/<token>/<kind>/<slug>.video.xml` | secret token | Podcast RSS, mp4 enclosures, no password |
+| GET | `/rss/<token>/` | secret token | HTML index of that user's feeds |
+| GET | `/rss/<token>/opml.xml` | secret token | OPML of that user's feeds (both variants) |
 | GET | `/chapters/<videoId>.json` | none | Podcasting 2.0 JSON chapters (public YT-derived data) |
 | GET | `/icon.png` | none | OwnTube icon — stable podcast cover art |
 | GET | `/health` | none | Liveness |
@@ -49,6 +53,34 @@ With a WebSub hub configured (see `feeds/hub/README.md`), each feed's own
 WebSub topic the hub fetches. A podcast app that displays or shares "the feed
 URL" will therefore show the password; that's accepted, since it's the same
 URL the user already pasted in to subscribe.
+
+The `/rss/<kind>/<slug>...`, `/` and `/opml.xml` routes above are unchanged by
+secret addresses — Basic Auth still works exactly as before.
+
+## Secret feed addresses
+
+Each user can also be issued an opaque per-user token (32 lowercase hex
+chars) that unlocks their feeds with **no password at all**: `/rss/<token>/...`
+mirrors the Basic-Auth routes one-for-one —
+`/rss/<token>/<kind>/<slug>.{audio,video}.xml` for a feed,
+`/rss/<token>/` for the HTML index, `/rss/<token>/opml.xml` for OPML. The
+token is generated and pushed by the publisher (home OwnTube) alongside a
+user's `username`/`passSha256` in the `/publish` payload
+(`UserCredential.feedToken`); this server only stores and serves it — it never
+mints one.
+
+A request for an unrecognized or malformed token gets a bare `404`, without
+touching the database for anything that doesn't look like a token
+(`/^[0-9a-f]{32}$/`). Every hit — including unknown tokens — is logged with
+only the token's first 6 characters (`012345…`), never the full value, so logs
+can be shared without leaking a live secret address. Responses carry the same
+`cache-control: private, max-age=300` as the Basic-Auth feed routes, since the
+content is just as per-user.
+
+Because the secret routes need no credentials, they're the ones to hand to a
+podcast app or share as "my feed" — the credentialed `user:pass@host/rss/...`
+form documented above still works, but a secret address never puts a password
+in a URL that a podcast client might log, cache or display.
 
 ## Config (env)
 
