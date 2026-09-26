@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { AppDb } from "@/server/db/client";
 import { users } from "@/server/db/schema";
 
@@ -40,12 +40,21 @@ export function ensureRssPass(db: AppDb, userId: number): string {
   return regenerateRssPass(db, userId);
 }
 
-/** Replace the password. The companion learns the new hash at the next publish. */
+/**
+ * Replace the password. `users` isn't watched by a dirty_at trigger (only
+ * feed content is), so the new secret address wouldn't reach the feeds
+ * server until the next interval publish (up to `intervalSec`) even though
+ * the UI shows it immediately — stamp dirty_at directly so the in-app
+ * publisher picks it up on its next tick (within `quietSec`).
+ */
 export function regenerateRssPass(db: AppDb, userId: number): string {
   const pass = generateRssPass();
   db.update(users)
     .set({ rssPass: pass, updatedAt: Math.floor(Date.now() / 1000) })
     .where(eq(users.id, userId))
     .run();
+  db.run(
+    sql`UPDATE feed_publish_state SET dirty_at = unixepoch() WHERE id = 1`,
+  );
   return pass;
 }
