@@ -10,8 +10,8 @@ import { trpc } from "@/trpc/react";
  * links they are. Regenerating the password rotates every address (it's
  * derived from the password) and takes effect at the next publish cycle, so
  * old subscriptions keep working briefly. The plain username/password pair
- * still unlocks the companion's own login for feeds published before this
- * change.
+ * still unlocks every feed at the protected, password-only addresses too —
+ * regenerating changes that password as well.
  */
 export function RssFeedsSection() {
   const utils = trpc.useUtils();
@@ -33,6 +33,7 @@ export function RssFeedsSection() {
         ["video", creds.queueUrls.video],
       ] as const)
     : null;
+  const hasAddresses = Boolean(queueUrls || creds?.feedsUrl);
 
   const copy = (label: string, value: string) => {
     void navigator.clipboard.writeText(value).then(() => {
@@ -45,10 +46,11 @@ export function RssFeedsSection() {
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">Podcast feeds (RSS)</h2>
       <p className="text-sm text-[hsl(var(--muted-foreground))]">
-        Subscribe to your queue, playlists and channels in a podcast app. Each
-        address below is a private link — anyone who has it can read that feed,
-        so share it only with your own podcast app. Regenerating the password
-        changes every address. Media still only plays on the home network.
+        Subscribe to your queue, playlists and channels in a podcast app.
+        {hasAddresses
+          ? " Each address below is a private link — anyone who has it can read that feed, so share it only with your own podcast app. Regenerating the password changes every address."
+          : null}{" "}
+        Media still only plays on the home network.
       </p>
       {creds ? (
         <div className="space-y-2 text-sm">

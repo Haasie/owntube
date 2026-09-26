@@ -193,7 +193,7 @@ export const settingsRouter = router({
   })),
 
   /**
-   * The credentialed companion URL for one feed, resolved through the slugs
+   * The secret companion address for one feed, resolved through the slugs
    * the publisher recorded on its last run. `url` is null when no companion
    * is configured or the feed hasn't been published yet (empty, or created
    * since the last publish cycle).

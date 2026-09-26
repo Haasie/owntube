@@ -49,10 +49,13 @@ https://user%40example.com:<rss-pass>@owntube.nedworks.org/rss/queue/queue.audio
 ```
 
 With a WebSub hub configured (see `feeds/hub/README.md`), each feed's own
-`<atom:link rel="self">` is this exact credentialed URL — it doubles as the
-WebSub topic the hub fetches. A podcast app that displays or shares "the feed
-URL" will therefore show the password; that's accepted, since it's the same
-URL the user already pasted in to subscribe.
+`<atom:link rel="self">` is this exact credentialed URL — but it no longer
+doubles as the WebSub topic the hub fetches: announcing a protected URL would
+hand the hub the owner's password, so hub announcements instead use that
+feed's secret address (see "Secret feed addresses" below). A protected feed
+whose owner has no token yet gets no pushes at all. A podcast app that
+displays or shares "the feed URL" will therefore show the password; that's
+accepted, since it's the same URL the user already pasted in to subscribe.
 
 The `/rss/<kind>/<slug>...`, `/` and `/opml.xml` routes above are unchanged by
 secret addresses — Basic Auth still works exactly as before.
