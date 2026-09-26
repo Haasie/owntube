@@ -7,7 +7,6 @@ import {
   publishedFeeds,
   subscriptions,
   userProfile,
-  users,
   watchHistory,
 } from "@/server/db/schema";
 import { clearRecommendationCachesForUser } from "@/server/recommendation/engine";
@@ -159,23 +158,12 @@ export const settingsRouter = router({
       upsertUserSettings(ctx.db, ctx.userId, input),
     ),
 
-  /**
-   * The account's secret feed addresses, plus its username/password for the
-   * companion's older, password-protected subscriptions.
-   */
+  /** The account's secret feed addresses. */
   rssFeeds: protectedProcedure.query(({ ctx }) => {
-    const row = ctx.db
-      .select({ email: users.email })
-      .from(users)
-      .where(eq(users.id, ctx.userId))
-      .get();
     const pass = ensureRssPass(ctx.db, ctx.userId);
     const base = process.env.OWNTUBE_PUBLISH_TARGET?.trim().replace(/\/+$/, "");
     const token = feedToken(pass);
     return {
-      // Full email; URL-encode it when placed inside a feed URL.
-      username: row?.email ?? "",
-      pass,
       companionUrl: process.env.OWNTUBE_PUBLISH_TARGET?.trim() || null,
       feedsUrl: base ? `${base}/rss/${token}/` : null,
       queueUrls: base
@@ -187,10 +175,12 @@ export const settingsRouter = router({
     };
   }),
 
-  /** New password; the companion accepts it after the next publish cycle. */
-  regenerateRssPass: protectedProcedure.mutation(({ ctx }) => ({
-    pass: regenerateRssPass(ctx.db, ctx.userId),
-  })),
+  /** Rotates the password the secret feed addresses are derived from, so
+   * every existing address (and any podcast subscription using it) breaks;
+   * the feeds server picks up the new one at the next publish cycle. */
+  regenerateRssPass: protectedProcedure.mutation(({ ctx }) => {
+    regenerateRssPass(ctx.db, ctx.userId);
+  }),
 
   /**
    * The secret companion address for one feed, resolved through the slugs

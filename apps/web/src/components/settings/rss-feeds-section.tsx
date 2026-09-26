@@ -7,11 +7,11 @@ import { trpc } from "@/trpc/react";
 /**
  * Secret addresses for the companion's podcast feeds: anyone with a feed's
  * URL can read it, no password required, so treat them like the private
- * links they are. Regenerating the password rotates every address (it's
- * derived from the password) and takes effect at the next publish cycle, so
- * old subscriptions keep working briefly. The plain username/password pair
- * still unlocks every feed at the protected, password-only addresses too —
- * regenerating changes that password as well.
+ * links they are. Regenerating creates a whole new set of addresses (derived
+ * from a password rotated behind the scenes) and takes effect at the next
+ * publish cycle, so old subscriptions keep working briefly before they break
+ * for good — any podcast app still using the old addresses needs
+ * re-subscribing at the new ones afterwards.
  */
 export function RssFeedsSection() {
   const utils = trpc.useUtils();
@@ -48,7 +48,7 @@ export function RssFeedsSection() {
       <p className="text-sm text-[hsl(var(--muted-foreground))]">
         Subscribe to your queue, playlists and channels in a podcast app.
         {hasAddresses
-          ? " Each address below is a private link — anyone who has it can read that feed, so share it only with your own podcast app. Regenerating the password changes every address."
+          ? " Each address below is a private link — anyone who has it can read that feed, so share it only with your own podcast app. Getting new addresses changes every one of them."
           : null}{" "}
         Media still only plays on the home network.
       </p>
@@ -100,25 +100,6 @@ export function RssFeedsSection() {
               </Button>
             </div>
           ) : null}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[hsl(var(--muted-foreground))]">
-              Login for older subscriptions
-            </span>
-            <code className="rounded bg-[hsl(var(--muted))] px-1.5 py-0.5">
-              {creds.username}
-            </code>
-            <code className="rounded bg-[hsl(var(--muted))] px-1.5 py-0.5">
-              {creds.pass}
-            </code>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => copy("creds", `${creds.username}:${creds.pass}`)}
-            >
-              {copied === "creds" ? "Copied" : "Copy"}
-            </Button>
-          </div>
           <div className="flex items-center gap-2">
             {confirmRegenerate ? (
               <>
@@ -149,13 +130,15 @@ export function RssFeedsSection() {
                 size="sm"
                 onClick={() => setConfirmRegenerate(true)}
               >
-                Regenerate password
+                Get new feed addresses
               </Button>
             )}
           </div>
           <p className="text-xs text-[hsl(var(--muted-foreground))]">
-            A new password reaches the feed server at the next publish (within
-            ~30 minutes); update your podcast apps afterwards.
+            This creates new addresses for every feed and breaks any podcast
+            subscription using the old ones. The new addresses reach the feed
+            server at the next publish (within ~30 minutes); update your podcast
+            apps afterwards.
           </p>
         </div>
       ) : (
