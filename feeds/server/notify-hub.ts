@@ -1,10 +1,14 @@
 /**
- * WebSub announcements. Feeds are per user and share paths, so a feed's topic
- * URL carries its owner's username (and, in the feed's own self link, the
- * password the client authenticated with). The hub matches announcements on
- * username + URL and fetches each subscription with the credentials it
- * subscribed with — this server never needs the plaintext password.
+ * WebSub announcements. Announcements use each feed's secret address (see
+ * secret-urls.ts) rather than a credentialed one: the hub fetches whatever it
+ * is told to subscribe to, and a protected URL would hand it the owner's
+ * password. A feed whose owner has no token yet (none issued) is skipped —
+ * there is no secret address to announce.
+ *
+ * `feedTopicUrl` remains for the protected routes' own self links, which do
+ * carry the owner's username (and, for the feed link, their password).
  */
+import { secretFeedPath } from "./secret-urls.ts";
 import type { FeedKey } from "./store.ts";
 
 export type HubConfig = {
@@ -29,13 +33,10 @@ export function feedTopicUrl(
   return `${base.protocol}//${userinfo}@${base.host}${pathname}`;
 }
 
-export function hubTopicUrls(publicUrl: string, feed: FeedKey): string[] {
-  return (["audio", "video"] as const).map((variant) =>
-    feedTopicUrl(
-      publicUrl,
-      feed.owner,
-      `/rss/${encodeURIComponent(feed.kind)}/${encodeURIComponent(feed.slug)}.${variant}.xml`,
-    ),
+export function hubTopicUrls(publicUrl: string, feed: FeedKey, token: string): string[] {
+  const origin = new URL(publicUrl).origin;
+  return (["audio", "video"] as const).map(
+    (variant) => `${origin}${secretFeedPath(token, feed.kind, feed.slug, variant)}`,
   );
 }
 
@@ -46,10 +47,14 @@ const MAX_URLS_PER_POST = 100;
 export async function notifyHub(
   config: HubConfig,
   feeds: FeedKey[],
+  tokenFor: (owner: string) => string | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
-  if (feeds.length === 0) return;
-  const urls = feeds.flatMap((feed) => hubTopicUrls(config.publicUrl, feed));
+  const urls = feeds.flatMap((feed) => {
+    const token = tokenFor(feed.owner);
+    return token === null ? [] : hubTopicUrls(config.publicUrl, feed, token);
+  });
+  if (urls.length === 0) return;
   for (let i = 0; i < urls.length; i += MAX_URLS_PER_POST) {
     const chunk = urls.slice(i, i + MAX_URLS_PER_POST);
     const body = new URLSearchParams({ "hub.mode": "publish" });

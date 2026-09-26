@@ -380,7 +380,7 @@ async function handlePublish(
   res.end(JSON.stringify({ ok: true, feeds: upserted, items }));
   // Announce after responding: a hub outage must never fail a publish.
   if (hub && changed.length > 0) {
-    notifyHub(hub, changed).then(
+    notifyHub(hub, changed, (o) => store.tokenFor(o)).then(
       () => logLine(`hub notified: ${changed.length} changed feed(s)`),
       (error: unknown) =>
         logLine(`hub notify failed: ${error instanceof Error ? error.message : String(error)}`),
