@@ -62,7 +62,13 @@ export function fetchTarget(topic: string): {
 
 export function redact(topic: string): string {
   const url = parseHttp(topic);
-  if (!url || !url.password) return topic;
-  url.password = "***";
-  return url.toString();
+  if (!url) return topic;
+  const hadPassword = Boolean(url.password);
+  if (hadPassword) url.password = "***";
+  const withPasswordMasked = url.toString();
+  const masked = withPasswordMasked.replace(
+    /(:\/\/[^/]*\/rss\/)([0-9a-f]{32})(?=\/|$)/,
+    (_, prefix: string, token: string) => `${prefix}${token.slice(0, 6)}…`,
+  );
+  return hadPassword || masked !== withPasswordMasked ? masked : topic;
 }

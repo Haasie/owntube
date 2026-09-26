@@ -67,3 +67,35 @@ test("redact hides the password only", () => {
   );
   assert.equal(redact(`https://owntube.example${PATH}`), `https://owntube.example${PATH}`);
 });
+
+test("redact hides a leading secret-address token", () => {
+  const token = "abcdef0123456789abcdef0123456789";
+  assert.equal(
+    redact(`https://owntube.example/rss/${token}/queue/queue.audio.xml`),
+    "https://owntube.example/rss/abcdef…/queue/queue.audio.xml",
+  );
+  assert.equal(
+    redact(`https://owntube.example/rss/${token}/`),
+    "https://owntube.example/rss/abcdef…/",
+  );
+  assert.equal(
+    redact(`https://owntube.example/rss/${token}/opml.xml`),
+    "https://owntube.example/rss/abcdef…/opml.xml",
+  );
+});
+
+test("redact masks both a token and a password when both are present", () => {
+  const token = "abcdef0123456789abcdef0123456789";
+  assert.equal(
+    redact(`https://alice:secret@owntube.example/rss/${token}/queue/queue.audio.xml`),
+    "https://alice:***@owntube.example/rss/abcdef…/queue/queue.audio.xml",
+  );
+});
+
+test("redact leaves other paths unchanged", () => {
+  assert.equal(redact(`https://owntube.example${PATH}`), `https://owntube.example${PATH}`);
+  assert.equal(
+    redact("https://owntube.example/rss/not-a-token/queue.audio.xml"),
+    "https://owntube.example/rss/not-a-token/queue.audio.xml",
+  );
+});
