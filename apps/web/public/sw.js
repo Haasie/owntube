@@ -1,6 +1,6 @@
-const STATIC_CACHE = "owntube-static-v10";
-const PAGE_CACHE = "owntube-pages-v10";
-const IMAGE_CACHE = "owntube-images-v10";
+const STATIC_CACHE = "owntube-static-v11";
+const PAGE_CACHE = "owntube-pages-v11";
+const IMAGE_CACHE = "owntube-images-v11";
 const STATIC_ASSETS = [
   "/",
   "/manifest.webmanifest",
@@ -37,11 +37,37 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+/**
+ * Requests the service worker must never touch: API calls, Next.js RSC
+ * navigation fetches (a cached or substituted payload there makes the router
+ * render the wrong page — a failed `/watch` fetch used to come back as the
+ * cached home page, so tapping a video "went home"), and media/manifest
+ * routes (Range requests, huge bodies, and hls.js/dash.js need the real
+ * network response and its errors).
+ */
+const PASSTHROUGH_PREFIXES = [
+  "/api/",
+  "/hls/",
+  "/dash/",
+  "/stream/",
+  "/invidious/",
+  "/captions/",
+  "/dvr/",
+  "/yt-hls",
+  "/enclosure/",
+];
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const reqUrl = new URL(event.request.url);
   if (reqUrl.origin !== self.location.origin) return;
-  if (reqUrl.pathname.startsWith("/api/")) return;
+  if (PASSTHROUGH_PREFIXES.some((p) => reqUrl.pathname.startsWith(p))) return;
+  if (
+    event.request.headers.get("RSC") === "1" ||
+    reqUrl.searchParams.has("_rsc")
+  ) {
+    return;
+  }
 
   const isDocument = event.request.mode === "navigate";
   const isNextStaticAsset = reqUrl.pathname.startsWith("/_next/static/");
@@ -113,10 +139,14 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (isDocument) {
+    // Network-first; a redirect (e.g. an auth proxy's login page) passes
+    // through untouched. Only a genuine network failure falls back to this
+    // page's cached copy — never to a *different* page, which would show the
+    // wrong content under the requested URL.
     event.respondWith(
       fetch(event.request)
         .then((resp) => {
-          if (resp.ok) {
+          if (resp.ok && resp.type === "basic") {
             const copy = resp.clone();
             void caches
               .open(PAGE_CACHE)
@@ -125,20 +155,11 @@ self.addEventListener("fetch", (event) => {
           return resp;
         })
         .catch(() =>
-          caches.match(event.request).then((hit) => hit || caches.match("/")),
+          caches.match(event.request).then((hit) => hit || Response.error()),
         ),
     );
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return (
-        cached ||
-        fetch(event.request).catch(
-          () => cached || caches.match("/") || Response.error(),
-        )
-      );
-    }),
-  );
+  // Anything else is not intercepted: the browser fetches it normally.
 });

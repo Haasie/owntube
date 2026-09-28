@@ -99,6 +99,7 @@ services:
       INVIDIOUS_DIRECT_HLS_SEGMENTS: "false"
       INVIDIOUS_COMPANION_INTERNAL_URL: http://invidious-companion:8282
       INVIDIOUS_COMPANION_SECRET_KEY: ${COMPANION_KEY}
+      OWNTUBE_MEDIA_DEBUG: ${OWNTUBE_MEDIA_DEBUG:-1}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

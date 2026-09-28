@@ -1,4 +1,5 @@
 import { mediaCorsPreflight, withMediaCors } from "@/lib/media-cors";
+import { withMediaDebug } from "@/lib/media-debug";
 import {
   handleUpstreamMediaRequest,
   STREAM_PROXY_PREFIX,
@@ -19,10 +20,12 @@ export async function GET(
 ) {
   const { rest } = await context.params;
   return withMediaCors(
-    await handleUpstreamMediaRequest(request, {
-      segments: rest,
-      prefix: STREAM_PROXY_PREFIX,
-    }),
+    await withMediaDebug(request, () =>
+      handleUpstreamMediaRequest(request, {
+        segments: rest,
+        prefix: STREAM_PROXY_PREFIX,
+      }),
+    ),
   );
 }
 

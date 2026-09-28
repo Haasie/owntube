@@ -1,4 +1,5 @@
 import { mediaCorsPreflight, withMediaCors } from "@/lib/media-cors";
+import { withMediaDebug } from "@/lib/media-debug";
 import {
   generateMasterPlaylist,
   generateMediaPlaylist,
@@ -20,7 +21,9 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ parts?: string[] }> },
 ): Promise<Response> {
-  return withMediaCors(await handleGET(request, context));
+  return withMediaCors(
+    await withMediaDebug(request, () => handleGET(request, context)),
+  );
 }
 
 export function OPTIONS(): Response {
