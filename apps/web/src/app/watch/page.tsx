@@ -253,7 +253,8 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
             ),
             dvr: detail.isPostLiveDvr === true,
             progressiveFallback:
-              rawPlayback.kind === "hls" && rawPlayback.progressiveFallback?.length
+              rawPlayback.kind === "hls" &&
+              rawPlayback.progressiveFallback?.length
                 ? toProxiedOrDirectVariants(
                     rawPlayback.progressiveFallback,
                     mediaOrigin,

@@ -290,10 +290,12 @@ export function useNativeAdapter(opts: {
 
   // WebKit AirPlay playback target availability and active target state
   useEffect(() => {
-    const v = videoRef.current as (HTMLVideoElement & {
-      webkitCurrentPlaybackTargetIsWireless?: boolean;
-      webkitShowPlaybackTargetPicker?: () => void;
-    }) | null;
+    const v = videoRef.current as
+      | (HTMLVideoElement & {
+          webkitCurrentPlaybackTargetIsWireless?: boolean;
+          webkitShowPlaybackTargetPicker?: () => void;
+        })
+      | null;
     if (!v) return;
 
     const onTargetAvailability = (e: Event & { availability?: string }) => {
@@ -405,6 +407,7 @@ export function useNativeAdapter(opts: {
     // Keep preview visual-only for native playback; final seek happens on release.
     seekPreview: () => {},
     setVolume: (n) => {
+      if (videoRef.current) delete videoRef.current.dataset.otAutoMuted;
       setExternalVolume(n);
       const nextMuted = n === 0 ? true : n > 0 && muted ? false : muted;
       if (nextMuted !== muted) setMuted(nextMuted);
@@ -426,6 +429,8 @@ export function useNativeAdapter(opts: {
       }
     },
     toggleMuted: () => {
+      // Any explicit mute choice supersedes an autoplay-forced mute.
+      if (videoRef.current) delete videoRef.current.dataset.otAutoMuted;
       const next = !muted;
       let nextVol = externalVolume;
       // If unmuting when volume was 0 (or clamped on mobile), restore volume to 0.5
@@ -486,9 +491,11 @@ export function useNativeAdapter(opts: {
     airPlayActive,
     airPlayUnavailableReason,
     showAirPlayPicker: () => {
-      const el = videoRef.current as (HTMLVideoElement & {
-        webkitShowPlaybackTargetPicker?: () => void;
-      }) | null;
+      const el = videoRef.current as
+        | (HTMLVideoElement & {
+            webkitShowPlaybackTargetPicker?: () => void;
+          })
+        | null;
       if (typeof el?.webkitShowPlaybackTargetPicker === "function") {
         el.webkitShowPlaybackTargetPicker();
       }

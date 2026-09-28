@@ -53,6 +53,7 @@ export function LiveBlock({
   const [volume, setVolume] = useState(() => readPlayerMediaPrefs().volume);
   const [playbackFailed, setPlaybackFailed] = useState(false);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new broadcast source clears the previous failure.
   useEffect(() => {
     setPlaybackFailed(false);
   }, [reactKey]);
@@ -121,7 +122,8 @@ export function LiveBlock({
     // starts instead of sitting paused; the viewer can unmute once it's going.
     const id = window.setTimeout(() => {
       const v = videoRef.current;
-      if (v && v.paused && !v.muted) {
+      if (v?.paused && !v.muted) {
+        v.dataset.otAutoMuted = "1";
         v.muted = true;
         void v.play().catch(() => {});
       }
@@ -209,7 +211,8 @@ export function LiveBlock({
           </div>
           <h3 className="mb-1 text-lg font-bold">Live Stream Unavailable</h3>
           <p className="mb-4 max-w-md text-xs text-neutral-300 sm:text-sm">
-            YouTube live streams require proprietary streaming that is not supported by this browser.
+            YouTube live streams require proprietary streaming that is not
+            supported by this browser.
           </p>
           <a
             href={`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`}

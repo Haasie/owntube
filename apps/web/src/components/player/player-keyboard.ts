@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { PLAYBACK_RATES } from "@/components/player/player-constants";
 import type { PlayerAdapter } from "@/components/player/player-types";
 
 /**
@@ -189,6 +190,9 @@ export function usePlayerKeyboardShortcuts(opts: {
       if (!shellRef.current?.contains(document.activeElement) && !fsActive) {
         return;
       }
+      // Browser/OS shortcuts (Cmd+F find, Cmd+L address bar, Ctrl+C copy…)
+      // must never double as player keys.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const key = e.key.toLowerCase();
       if (key === "escape") {
         releaseSpaceHoldIfNeeded();
@@ -265,6 +269,39 @@ export function usePlayerKeyboardShortcuts(opts: {
       } else if (key === "i") {
         e.preventDefault();
         adapter.togglePictureInPicture();
+      } else if (key === "t") {
+        // YouTube's theater-mode key (cinema here).
+        e.preventDefault();
+        onToggleCinema();
+        ping();
+      } else if (/^[0-9]$/.test(key) && adapter.duration > 0) {
+        // YouTube: 0–9 jump to 0%–90% of the video.
+        e.preventDefault();
+        adapter.seek((adapter.duration * Number(key)) / 10);
+        ping();
+      } else if (key === "home") {
+        e.preventDefault();
+        adapter.seek(0);
+        ping();
+      } else if (key === "end" && adapter.duration > 0) {
+        e.preventDefault();
+        adapter.seek(Math.max(0, adapter.duration - 0.5));
+        ping();
+      } else if (e.key === ">" || e.key === "<") {
+        // YouTube: Shift+. / Shift+, step through the speed ladder.
+        e.preventDefault();
+        const rates: readonly number[] = PLAYBACK_RATES;
+        const i = rates.indexOf(adapter.playbackRate);
+        const cur = i >= 0 ? i : rates.indexOf(1);
+        const next =
+          rates[
+            Math.min(
+              rates.length - 1,
+              Math.max(0, cur + (e.key === ">" ? 1 : -1)),
+            )
+          ];
+        if (next !== undefined) adapter.setPlaybackRate(next);
+        ping();
       }
     };
     window.addEventListener("keydown", handler, true);

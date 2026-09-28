@@ -14,7 +14,7 @@
  * callers must keep the volume-attenuation fallback for when attach fails.
  */
 
-import { isIosLikeBrowser } from "@/lib/ios-playback";
+import { prefersMuxedForAirPlaySafety } from "@/lib/ios-playback";
 
 let sharedCtx: AudioContext | null = null;
 
@@ -74,10 +74,13 @@ export function isSameOriginMediaSrc(
  */
 export function attachPeakLimiter(el: HTMLMediaElement | null): boolean {
   if (!el) return false;
-  // On iOS / WebKit, AVPlayer natively handles audio rate-stretching and
-  // limiting. Route-intercepting media via createMediaElementSource breaks
-  // AirPlay (Apple TV gets silent audio) and can suspend audio playback.
-  if (isIosLikeBrowser()) return false;
+  // WebKit plays a MediaElementAudioSourceNode's output through the local
+  // AudioContext, never over AirPlay: once wired, an Apple TV gets picture
+  // with no sound (and the routing can't be undone for that element). That
+  // holds for desktop macOS Safari as much as iPhone/iPad, so skip the limiter
+  // on every AirPlay-capable WebKit browser — callers fall back to the
+  // volume-attenuation curve (see player-volume-gain.ts).
+  if (prefersMuxedForAirPlaySafety()) return false;
   if (wired.has(el)) {
     void getSharedContext()?.resume();
     return true;

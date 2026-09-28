@@ -231,8 +231,11 @@ export function VideoPlayer({
   const [overridePayload, setOverridePayload] =
     useState<VideoPlayerPayload | null>(null);
 
+  const hlsFallbackAppliedRef = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new video starts back on its own (HLS) payload.
   useEffect(() => {
     setOverridePayload(null);
+    hlsFallbackAppliedRef.current = false;
   }, [videoId]);
 
   const effectivePayload: VideoPlayerPayload = overridePayload ?? payload;
@@ -282,7 +285,9 @@ export function VideoPlayer({
       return Math.min(1, Math.max(0, restoredVolume));
     }
     const prefVol = readPlayerMediaPrefs().volume;
-    return typeof prefVol === "number" && Number.isFinite(prefVol) && prefVol > 0
+    return typeof prefVol === "number" &&
+      Number.isFinite(prefVol) &&
+      prefVol > 0
       ? prefVol
       : 0.48;
   });
@@ -403,7 +408,16 @@ export function VideoPlayer({
     const pref = shortsMode
       ? "360p-muxed"
       : (defaultPlaybackQualityProp ?? readDefaultPlaybackQuality());
-    setQualityIndex(initialQualityIndexForPayload(effectivePayload, pref));
+    // After an HLS→progressive fallback the variants are already ordered for
+    // this device (muxed-first on AirPlay-capable WebKit, default-quality-first
+    // elsewhere), so start on the first one. Re-applying the default-quality
+    // pick here would land on a huge split rung — on iOS that meant Safari
+    // seeking through a ~900 MB progressive file and sitting on 0:00.
+    setQualityIndex(
+      overridePayload
+        ? 0
+        : initialQualityIndexForPayload(effectivePayload, pref),
+    );
     if (lastResetVideoIdRef.current !== videoId) {
       lastResetVideoIdRef.current = videoId;
       setResumeSeekSeconds(undefined);
@@ -412,6 +426,7 @@ export function VideoPlayer({
     variantFallbackAttemptsRef.current = 0;
   }, [
     effectivePayload,
+    overridePayload,
     videoId,
     defaultPlaybackQualityProp,
     initialQualityIndexProp,
@@ -473,6 +488,11 @@ export function VideoPlayer({
       effectivePayload.progressiveFallback &&
       effectivePayload.progressiveFallback.length > 0
     ) {
+      // The native-HLS path reports one failure through both the element's
+      // `onError` prop and its own listener — two calls in the same tick,
+      // both still seeing the HLS payload. Only the first may swap sources.
+      if (hlsFallbackAppliedRef.current) return;
+      hlsFallbackAppliedRef.current = true;
       console.warn(
         "[VideoPlayer] HLS playback failed, falling back to progressive variants",
         effectivePayload.progressiveFallback,

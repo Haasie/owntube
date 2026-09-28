@@ -268,4 +268,3 @@ export function AirPlayIcon({ className }: { className?: string }) {
     </svg>
   );
 }
-

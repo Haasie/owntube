@@ -115,6 +115,24 @@ export function PlayerChrome({
       }
     };
   }, []);
+  // YouTube-style double-tap seek on touch: the side of the video tapped twice
+  // (left/right ~third) seeks ±10s; further taps on the same side within the
+  // window keep adding 10s. `seekRipple` drives the brief "« 20 s" badge.
+  const lastTapRef = useRef<{ t: number; side: -1 | 0 | 1; seeking: boolean }>({
+    t: 0,
+    side: 0,
+    seeking: false,
+  });
+  const [seekRipple, setSeekRipple] = useState<{
+    side: -1 | 1;
+    seconds: number;
+    tick: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!seekRipple) return;
+    const t = window.setTimeout(() => setSeekRipple(null), 750);
+    return () => window.clearTimeout(t);
+  }, [seekRipple]);
   const [autoCenterHint, setAutoCenterHint] = useState<{
     kind: "play" | "pause";
     tick: number;
@@ -223,6 +241,28 @@ export function PlayerChrome({
     // the center button). Toggling here paused the video on every tap meant
     // to reveal the controls — including taps on the hidden scrubber.
     if (surfacePointerTypeRef.current === "touch" && !shortsMode) {
+      const now = Date.now();
+      const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const x = box.width > 0 ? (e.clientX - box.left) / box.width : 0.5;
+      const side: -1 | 0 | 1 = x < 0.35 ? -1 : x > 0.65 ? 1 : 0;
+      const last = lastTapRef.current;
+      const windowMs = last.seeking ? 700 : 300;
+      if (
+        side !== 0 &&
+        !isLive &&
+        last.side === side &&
+        now - last.t < windowMs
+      ) {
+        lastTapRef.current = { t: now, side, seeking: true };
+        skip(side * 10);
+        setSeekRipple((prev) => ({
+          side,
+          seconds: last.seeking && prev?.side === side ? prev.seconds + 10 : 10,
+          tick: now,
+        }));
+        return;
+      }
+      lastTapRef.current = { t: now, side, seeking: false };
       ping();
       return;
     }
@@ -262,6 +302,12 @@ export function PlayerChrome({
     isLive && Number.isFinite(duration) && duration > LIVE_EDGE_SECONDS;
   const behindLiveEdge = liveWithDvr && seekPos < duration - LIVE_EDGE_SECONDS;
   const chromeShown = (shortsMode || visible) && !hold2xUi;
+  const autoMuted =
+    hydrated &&
+    !miniMode &&
+    !shortsMode &&
+    adapter.muted &&
+    shellRef.current?.querySelector("video")?.dataset.otAutoMuted === "1";
   const captionText = captions.kind === "tracks" ? captions.activeText : null;
   const currentChapterTitle =
     chapters.length > 1
@@ -283,11 +329,60 @@ export function PlayerChrome({
         onPointerUp={onSurfacePointerUp}
         onPointerCancel={onSurfacePointerUp}
         onPointerLeave={onSurfacePointerLeave}
-        onDoubleClick={shortsMode ? undefined : () => void toggleFs()}
+        onDoubleClick={
+          shortsMode
+            ? undefined
+            : () => {
+                // Touch double-taps seek (above); only a mouse double-click
+                // toggles fullscreen, as on YouTube.
+                if (surfacePointerTypeRef.current === "touch") return;
+                void toggleFs();
+              }
+        }
         className="absolute inset-0 z-10 cursor-pointer bg-transparent"
       />
 
       <CaptionOverlay text={captionText} raised={chromeShown} />
+
+      {seekRipple ? (
+        <div
+          key={seekRipple.tick}
+          className={cn(
+            "pointer-events-none absolute inset-y-0 z-30 flex w-[38%] items-center justify-center bg-white/10",
+            seekRipple.side < 0
+              ? "left-0 rounded-r-[50%]"
+              : "right-0 rounded-l-[50%]",
+          )}
+          aria-hidden
+        >
+          <span className="rounded-full bg-black/60 px-3 py-1.5 text-sm font-semibold tabular-nums text-white">
+            {seekRipple.side < 0
+              ? `« ${seekRipple.seconds} s`
+              : `${seekRipple.seconds} s »`}
+          </span>
+        </div>
+      ) : null}
+
+      {/* YouTube-style "tap to unmute": when the browser refused unmuted
+          autoplay and we started muted instead (see the autoplay drivers'
+          `otAutoMuted` mark), a small speaker icon is too easy to miss. */}
+      {autoMuted ? (
+        <button
+          type="button"
+          data-controls
+          onClick={(e) => {
+            e.stopPropagation();
+            const el = shellRef.current?.querySelector("video");
+            if (el) delete el.dataset.otAutoMuted;
+            adapter.toggleMuted();
+            ping();
+          }}
+          className="absolute left-3 top-3 z-40 flex items-center gap-2 rounded-full bg-black/75 px-3.5 py-2 text-sm font-semibold text-white shadow-lg backdrop-blur-sm transition active:scale-95"
+        >
+          <MuteIcon className="h-5 w-5" />
+          <span>Tap to unmute</span>
+        </button>
+      ) : null}
 
       {airPlaySplitNotice ? (
         <div className="pointer-events-none absolute inset-x-0 top-4 z-40 flex justify-center px-4">

@@ -85,6 +85,7 @@ export function useShortsNativeAutoplay(
       if (muteForAutoplayPolicy) el.muted = true;
       void el.play().catch(() => {
         if (startedOnce || el.muted) return;
+        el.dataset.otAutoMuted = "1";
         el.muted = true;
         void el.play().catch(() => {
           /* autoplay policy — retried by the poll/events below */
