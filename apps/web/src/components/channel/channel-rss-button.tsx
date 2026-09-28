@@ -25,7 +25,6 @@ export function ChannelRssButton({
       kind="channel"
       refId={channelId}
       trigger="more"
-      menuAbove
       buttonClassName="flex h-9 w-9 items-center justify-center rounded-full text-white/85 transition hover:bg-white/15 hover:text-white"
     />
   );
