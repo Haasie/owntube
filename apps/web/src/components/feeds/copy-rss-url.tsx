@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useActionToast } from "@/components/videos/action-toast";
+import { MoreIcon } from "@/components/videos/video-action-icons";
+import { cn } from "@/lib/utils";
 import { trpc } from "@/trpc/react";
 
 export type RssFeedKind =
@@ -50,16 +52,22 @@ export function useCopyRssUrl(): (
 /**
  * "Copy RSS URL" with an audio/video chooser. Default styling suits page
  * headers on the standard background; pass buttonClassName to restyle the
- * trigger (e.g. the playlist header's white-on-brand pill).
+ * trigger (e.g. the playlist header's white-on-brand pill), or
+ * trigger="more" to tuck it behind a ⋯ button where it needn't be prominent.
  */
 export function CopyRssUrlButton({
   kind,
   refId,
   buttonClassName,
+  menuAbove = false,
+  trigger = "label",
 }: {
   kind: RssFeedKind;
   refId: string;
   buttonClassName?: string;
+  /** Open the chooser upward, for spots near a clipped container's bottom. */
+  menuAbove?: boolean;
+  trigger?: "label" | "more";
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -86,18 +94,26 @@ export function CopyRssUrlButton({
       <button
         type="button"
         aria-expanded={open}
+        aria-label={trigger === "more" ? "More options" : undefined}
+        title={trigger === "more" ? "More options" : undefined}
         onClick={() => setOpen((o) => !o)}
         className={
           buttonClassName ??
-          "rounded-full border border-[hsl(var(--border))] px-4 py-1.5 text-sm font-medium text-[hsl(var(--muted-foreground))] transition hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))]"
+          (trigger === "more"
+            ? "flex h-8 w-8 items-center justify-center rounded-full text-[hsl(var(--muted-foreground))] transition hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))]"
+            : "rounded-full border border-[hsl(var(--border))] px-4 py-1.5 text-sm font-medium text-[hsl(var(--muted-foreground))] transition hover:bg-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))]")
         }
       >
-        Copy RSS URL
+        {trigger === "more" ? <MoreIcon className="h-5 w-5" /> : "Copy RSS URL"}
       </button>
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 top-full z-40 mt-1 w-40 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow-lg"
+          className={cn(
+            "absolute right-0 z-40 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1 text-sm shadow-lg",
+            trigger === "more" ? "w-56" : "w-40",
+            menuAbove ? "bottom-full mb-1" : "top-full mt-1",
+          )}
         >
           {(["audio", "video"] as const).map((variant) => (
             <button
@@ -110,7 +126,11 @@ export function CopyRssUrlButton({
                 void copyRssUrl(kind, refId, variant);
               }}
             >
-              {variant === "audio" ? "Audio feed" : "Video feed"}
+              {trigger === "more"
+                ? `Copy RSS URL (${variant})`
+                : variant === "audio"
+                  ? "Audio feed"
+                  : "Video feed"}
             </button>
           ))}
         </div>
