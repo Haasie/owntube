@@ -38,31 +38,46 @@ done
 
 log "=== Starting OwnTube stack maintenance & update check ==="
 
-# 1. Update Invidious & Companion container images from registry
-log "Checking for new Invidious and Invidious Companion images..."
-if docker compose pull --quiet invidious invidious-companion >> "$LOG_FILE" 2>&1; then
-    log "Images checked/pulled. Recreating containers if updated..."
-    docker compose up -d --remove-orphans invidious-companion invidious >> "$LOG_FILE" 2>&1
+# 1. Update the Invidious image from the registry. The companion is NOT pulled:
+#    it is mdbraber's patched build (SABR live + Camoufox PO tokens), compiled
+#    locally from github.com/mdbraber/invidious-companion — see step 2b.
+log "Checking for a new Invidious image..."
+if docker compose pull --quiet invidious >> "$LOG_FILE" 2>&1; then
+    docker compose up -d --remove-orphans invidious >> "$LOG_FILE" 2>&1
+    log "Invidious image checked/pulled."
 else
-    log "Warning: Docker image pull encountered an issue. Keeping existing containers running."
+    log "Warning: Invidious image pull failed. Keeping the running container."
 fi
 
-# 2. Check for upstream OwnTube git changes
-log "Fetching latest git commits from origin..."
-if git fetch origin "$BRANCH" --quiet >> "$LOG_FILE" 2>&1; then
-    UPSTREAM_BEHIND=$(git rev-list --count HEAD..origin/"$BRANCH" 2>/dev/null || echo 0)
+# 2a. New OwnTube commits from mdbraber (remote "upstream"; "origin" is our fork)
+log "Fetching mdbraber/owntube (upstream)..."
+if git fetch upstream "$BRANCH" --quiet >> "$LOG_FILE" 2>&1; then
+    UPSTREAM_BEHIND=$(git rev-list --count HEAD..upstream/"$BRANCH" 2>/dev/null || echo 0)
     if [ "$UPSTREAM_BEHIND" -gt 0 ]; then
-        log "Let op: Upstream (origin/$BRANCH) heeft $UPSTREAM_BEHIND nieuwe commit(s):"
-        git log --oneline -n 10 HEAD..origin/"$BRANCH" | while read -r line; do
+        log "Let op: mdbraber/owntube heeft $UPSTREAM_BEHIND nieuwe commit(s):"
+        git log --oneline -n 10 HEAD..upstream/"$BRANCH" | while read -r line; do
             log "  * $line"
         done
-        log "Om te mergen en te testen (bewuste handeling i.v.m. stabiliteit):"
-        log "  cd $REPO_DIR && git merge origin/$BRANCH && pnpm test && docker compose build owntube && docker compose up -d"
+        log "Mergen en testen (bewuste handeling i.v.m. stabiliteit):"
+        log "  cd $REPO_DIR && git merge upstream/$BRANCH && pnpm test && docker compose build owntube && docker compose up -d owntube && git push origin $BRANCH"
     else
-        log "OwnTube git repository is up-to-date met origin/$BRANCH."
+        log "OwnTube is up-to-date met mdbraber/owntube."
     fi
 else
-    log "Warning: Git fetch failed; skipping git check."
+    log "Warning: git fetch upstream failed; skipping OwnTube check."
+fi
+
+# 2b. New commits in mdbraber's patched companion
+COMPANION_DIR="$(dirname "$REPO_DIR")/invidious-companion"
+if [ -d "$COMPANION_DIR/.git" ] && git -C "$COMPANION_DIR" fetch origin master --quiet >> "$LOG_FILE" 2>&1; then
+    C_BEHIND=$(git -C "$COMPANION_DIR" rev-list --count HEAD..origin/master 2>/dev/null || echo 0)
+    if [ "$C_BEHIND" -gt 0 ]; then
+        log "Let op: mdbraber/invidious-companion heeft $C_BEHIND nieuwe commit(s). Bouwen en testen volgens PATCHES.md:"
+        log "  cd $COMPANION_DIR && git pull && docker build -t local/invidious-companion:\$(date +%Y.%m.%d)-master-\$(git rev-parse --short HEAD) ."
+        log "  daarna image: in $REPO_DIR/docker-compose.yml bijwerken en: docker compose up -d invidious-companion"
+    else
+        log "Companion is up-to-date met mdbraber/invidious-companion."
+    fi
 fi
 
 # 3. If force rebuild requested, rebuild local OwnTube image

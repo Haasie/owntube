@@ -21,13 +21,20 @@ services:
 
   invidious-companion:
     container_name: invidious-companion
-    image: quay.io/invidious/invidious-companion:latest
+    # mdbraber's patched companion (github.com/mdbraber/invidious-companion,
+    # built locally from master — see its PATCHES.md): SABR connector for live
+    # streams + Camoufox PO tokens, which YouTube requires since 2026-09-23.
+    image: local/invidious-companion:2026.09.28-master-aa135ec
     restart: unless-stopped
     environment:
       - SERVER_SECRET_KEY=${COMPANION_KEY}
+      - SABR_LIVE_MANIFEST_TTL_MS=5000
     cap_drop:
       - ALL
     read_only: true
+    shm_size: 256mb
+    tmpfs:
+      - /tmp
     security_opt:
       - no-new-privileges:true
     volumes:
@@ -38,7 +45,7 @@ services:
     networks:
       - cosmos-network
     labels:
-      - "cosmos-auto-update=true"
+      - "cosmos-auto-update=false"
 
   invidious:
     container_name: invidious
@@ -100,6 +107,7 @@ services:
       INVIDIOUS_COMPANION_INTERNAL_URL: http://invidious-companion:8282
       INVIDIOUS_COMPANION_SECRET_KEY: ${COMPANION_KEY}
       OWNTUBE_MEDIA_DEBUG: ${OWNTUBE_MEDIA_DEBUG:-1}
+      INVIDIOUS_COMPANION_SABR_VOD: ${INVIDIOUS_COMPANION_SABR_VOD:-fallback}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
