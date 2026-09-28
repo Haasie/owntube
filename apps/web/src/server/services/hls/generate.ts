@@ -252,11 +252,34 @@ export function parseSidx(buf: Buffer, indexStart: number): Sidx {
   };
 }
 
+/**
+ * Stream URLs are minted against the *public* instance base (so browsers can
+ * reach them), but this is a server-side fetch: when the public host differs
+ * from INVIDIOUS_BASE_URL — e.g. it sits behind an auth reverse proxy that
+ * answers the index Range request with a login redirect (seen as a 416) —
+ * go to the internal instance directly. No-op when the two bases match.
+ */
+export function serverSideInstanceUrl(url: string): string {
+  const pub = invidiousPublicBase();
+  const inv = invidiousBase();
+  if (!pub || !inv || pub === inv) return url;
+  try {
+    const u = new URL(url);
+    if (u.host !== new URL(pub).host) return url;
+    const internal = new URL(inv);
+    u.protocol = internal.protocol;
+    u.host = internal.host;
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 async function fetchSidx(streamUrl: string, indexRange: string): Promise<Sidx> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), INVIDIOUS_TIMEOUT_MS);
   try {
-    const r = await fetch(streamUrl, {
+    const r = await fetch(serverSideInstanceUrl(streamUrl), {
       headers: { range: `bytes=${indexRange}` },
       signal: controller.signal,
       cache: "no-store",
