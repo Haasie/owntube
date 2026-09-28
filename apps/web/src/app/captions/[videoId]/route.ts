@@ -1,5 +1,6 @@
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { mediaCorsPreflight, withMediaCors } from "@/lib/media-cors";
+import { withMediaDebug } from "@/lib/media-debug";
 import { normalizeUpstreamBaseUrl } from "@/lib/upstream-base-url";
 import {
   companionInternalBase,
@@ -167,7 +168,9 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ videoId?: string }> },
 ): Promise<Response> {
-  return withMediaCors(await handleGET(request, context));
+  return withMediaCors(
+    await withMediaDebug(request, () => handleGET(request, context)),
+  );
 }
 
 export function OPTIONS(): Response {
