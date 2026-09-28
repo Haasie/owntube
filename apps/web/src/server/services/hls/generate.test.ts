@@ -5,6 +5,7 @@ import {
   buildMasterPlaylist,
   buildSubtitlePlaylist,
   pickAudioTracks,
+  serverSideInstanceUrl,
 } from "@/server/services/hls/generate";
 
 const avc720: AdaptiveFormat = {
@@ -150,5 +151,28 @@ describe("buildSubtitlePlaylist", () => {
         "",
       ].join("\n"),
     );
+  });
+});
+
+describe("serverSideInstanceUrl", () => {
+  it("routes public-instance stream URLs to the internal instance", () => {
+    const prevPub = process.env.INVIDIOUS_PUBLIC_BASE_URL;
+    const prevInv = process.env.INVIDIOUS_BASE_URL;
+    process.env.INVIDIOUS_PUBLIC_BASE_URL = "https://inv.example";
+    process.env.INVIDIOUS_BASE_URL = "http://invidious:3000";
+    try {
+      expect(
+        serverSideInstanceUrl("https://inv.example/videoplayback?itag=136&x=1"),
+      ).toBe("http://invidious:3000/videoplayback?itag=136&x=1");
+      // Other hosts (googlevideo, companion) pass through untouched.
+      expect(
+        serverSideInstanceUrl("https://rr1.googlevideo.com/videoplayback?a=1"),
+      ).toBe("https://rr1.googlevideo.com/videoplayback?a=1");
+    } finally {
+      if (prevPub === undefined) delete process.env.INVIDIOUS_PUBLIC_BASE_URL;
+      else process.env.INVIDIOUS_PUBLIC_BASE_URL = prevPub;
+      if (prevInv === undefined) delete process.env.INVIDIOUS_BASE_URL;
+      else process.env.INVIDIOUS_BASE_URL = prevInv;
+    }
   });
 });
