@@ -1,13 +1,12 @@
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { z } from "zod";
 import { normalizeChannelTag } from "@/lib/channel-tag";
-import type { LongFormWindow } from "@/lib/long-form-uploads";
+import { isSubscriptionShort } from "@/lib/long-form-uploads";
 import {
   compareSubscriptionHeads,
   newerPublished,
   publishedSortKey,
 } from "@/lib/published-sort-key";
-import { isStrictShortVideo } from "@/lib/short-video";
 import { normalizeYoutubeChannelId } from "@/lib/youtube-channel-id";
 import { refreshChannelsLatestVideoAt } from "@/server/channel-meta/recency";
 import {
@@ -26,6 +25,7 @@ import {
 import { RateLimitExceededError } from "@/server/errors/rate-limit-exceeded";
 import { UpstreamUnavailableError } from "@/server/errors/upstream-unavailable";
 import { removeWatchedFromQueue } from "@/server/queue/remove-watched";
+import { requestFeedPublish } from "@/server/remote/publish-loop";
 import {
   getChannelRssEntries,
   getLongFormWindows,
@@ -703,35 +703,6 @@ async function refreshChannelPageCache(
   return { refreshed };
 }
 
-/**
- * A subscription-feed video is treated as a Short when the channel's long-form
- * uploads playlist (UULF) — an authoritative, Shorts-free allowlist — is available
- * and the video sits inside that recent window yet is absent from it (this catches
- * long Shorts the duration heuristic misses, with no false positives, since any
- * long-form upload newer than the window's oldest entry would be in the window).
- * Live/upcoming are never hidden (the long-form playlist also omits those). Videos
- * older than the fetched window, or channels with no playlist data, fall back to the
- * duration/#shorts heuristic in `isStrictShortVideo`.
- */
-function isSubscriptionShort(
-  video: UnifiedVideo,
-  windows: ReadonlyMap<string, LongFormWindow>,
-): boolean {
-  if (video.isLive || video.isUpcoming) return false;
-  const window = video.channelId ? windows.get(video.channelId) : undefined;
-  if (window) {
-    if (window.ids.has(video.videoId)) return false;
-    if (
-      typeof video.publishedAt === "number" &&
-      window.oldestPublishedAt !== null &&
-      video.publishedAt >= window.oldestPublishedAt
-    ) {
-      return true;
-    }
-  }
-  return isStrictShortVideo(video);
-}
-
 async function stripShortsFromSubscriptionFeed(
   db: AppDb,
   videos: UnifiedVideo[],
@@ -975,9 +946,11 @@ export const subscriptionsRouter = router({
       await refreshChannelMetaIfStale(ctx.db, channelId).catch(() => {});
       // Warm the new channel's feed inputs immediately (fire-and-forget) so it
       // shows up in the merged feed and sorts correctly without waiting for
-      // the next cache-warmer cycle.
+      // the next cache-warmer cycle. Once its uploads are cached, publish the
+      // feeds right away so the channel's RSS URL can be copied immediately
+      // (the publisher skips channels with no cached uploads).
       void Promise.allSettled([
-        refreshChannelRss(ctx.db, channelId),
+        refreshChannelRss(ctx.db, channelId).finally(requestFeedPublish),
         refreshLongFormWindow(ctx.db, channelId),
         fetchChannelPage(ctx.db, { channelId }),
       ]).then(() =>

@@ -185,6 +185,44 @@ describe("createFeedPublisher", () => {
     expect(h.calls.publish).toBe(1);
   });
 
+  describe("requestPublish", () => {
+    it("publishes a fresh change without waiting for quiet", async () => {
+      const h = harness({ dirtyAt: 10_000, publishedAt: 9_000 });
+      await h.publisher.tick();
+      expect(h.calls.publish).toBe(0);
+      await h.publisher.requestPublish();
+      expect(h.calls.publish).toBe(1);
+      expect(h.state.publishedAt).toBe(9_999);
+    });
+
+    it("publishes even when nothing is dirty, once per request", async () => {
+      const h = harness({ dirtyAt: 0, publishedAt: 10_000 });
+      await h.publisher.requestPublish();
+      expect(h.calls.publish).toBe(1);
+      h.advance(10);
+      await h.publisher.tick();
+      expect(h.calls.publish).toBe(1);
+    });
+
+    it("reruns after a tick that was already running", async () => {
+      const h = harness({ dirtyAt: 9_960, publishedAt: 9_000 });
+      const running = h.publisher.tick();
+      await h.publisher.requestPublish();
+      await running;
+      expect(h.calls.publish).toBe(2);
+    });
+
+    it("honours the failure back-off", async () => {
+      const h = harness({ dirtyAt: 9_960, publishedAt: 9_000 });
+      h.setFail(true);
+      await h.publisher.tick();
+      h.setFail(false);
+      h.advance(10);
+      await h.publisher.requestPublish();
+      expect(h.calls.publish).toBe(1);
+    });
+  });
+
   describe("syncUploads", () => {
     function syncHarness(
       initial: PublishState,

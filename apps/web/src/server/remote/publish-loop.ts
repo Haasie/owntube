@@ -19,6 +19,9 @@ import { syncWebSub } from "@/server/websub/sync";
  * (`syncWebSub`) about once a minute, at the start of a tick. A push that
  * changes a channel feed writes the RSS cache, which stamps dirty_at, so the
  * publish follows through the normal quiet/maxWait rules.
+ *
+ * A user action that should show up in the feeds right away (subscribing to a
+ * channel) calls `requestFeedPublish()`, which skips the quiet wait.
  */
 
 export type PublishState = { dirtyAt: number; publishedAt: number };
@@ -85,6 +88,9 @@ function message(error: unknown): string {
 
 export function createFeedPublisher(deps: FeedPublisherDeps): {
   tick: () => Promise<void>;
+  /** Publish on a tick started now, without waiting for writes to go quiet.
+   * Still honours the failure back-off. */
+  requestPublish: () => Promise<void>;
 } {
   const now = deps.now ?? (() => Math.floor(Date.now() / 1000));
   const log = deps.log ?? ((msg: string) => console.log(msg));
@@ -96,6 +102,8 @@ export function createFeedPublisher(deps: FeedPublisherDeps): {
   /** When this loop first saw the current change go unpublished; cleared
    * once a publish succeeds, so a new burst starts its own maxWait clock. */
   let dirtySince: number | undefined;
+  /** Set by requestPublish; a request landing mid-tick reruns it after. */
+  let requested = false;
 
   async function tick(): Promise<void> {
     if (running) return;
@@ -117,14 +125,16 @@ export function createFeedPublisher(deps: FeedPublisherDeps): {
       // Re-read the clock: a slow sync must not leave the publish decision
       // (and the published-at stamp) looking at a stale "now".
       const decidedAt = now();
-      let reason: "changed" | "interval" | null = null;
+      let reason: "changed" | "interval" | "requested" | null = null;
       if (decidedAt >= failedUntil) {
         try {
           const state = deps.readState();
           if (state.dirtyAt > state.publishedAt && dirtySince === undefined) {
             dirtySince = decidedAt;
           }
-          reason = publishReason(state, decidedAt, timing, dirtySince);
+          reason = requested
+            ? "requested"
+            : publishReason(state, decidedAt, timing, dirtySince);
         } catch (error) {
           failedUntil = decidedAt + RETRY_AFTER_FAILURE_SEC;
           log(
@@ -133,6 +143,9 @@ export function createFeedPublisher(deps: FeedPublisherDeps): {
         }
       }
       if (reason) {
+        // Cleared before publishing: a request made while this publish is
+        // building may postdate what it read, so it gets its own run.
+        requested = false;
         try {
           const { feedCount, itemCount } = await deps.publish();
           // One second back: a write landing in the same second this publish
@@ -161,12 +174,26 @@ export function createFeedPublisher(deps: FeedPublisherDeps): {
     } finally {
       running = false;
     }
+    if (requested && now() >= failedUntil) await tick();
   }
 
-  return { tick };
+  async function requestPublish(): Promise<void> {
+    requested = true;
+    await tick();
+  }
+
+  return { tick, requestPublish };
 }
 
 let started = false;
+let activePublisher: ReturnType<typeof createFeedPublisher> | null = null;
+
+/** Publish now instead of after the quiet wait. A no-op in processes that
+ * don't run the publisher (dev) — there the dirty trigger lets prod's loop
+ * pick the change up on its normal schedule. */
+export function requestFeedPublish(): void {
+  void activePublisher?.requestPublish();
+}
 
 /** Start publishing from this process. Only the prod container may set
  * OWNTUBE_PUBLISH_SECRET: dev shares its database, and two publishers would
@@ -240,6 +267,7 @@ export function startFeedPublisher(): boolean {
     log,
   });
 
+  activePublisher = publisher;
   setInterval(() => void publisher.tick(), TICK_MS).unref();
   void publisher.tick();
   log(

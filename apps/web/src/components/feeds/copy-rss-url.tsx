@@ -36,7 +36,7 @@ export function useCopyRssUrl(): (
       if (!url) {
         showToast(
           res.reason === "not-published"
-            ? "Not published yet — feeds update every half hour"
+            ? "Not published yet — try again in a minute"
             : "No feed server configured",
         );
         return;
