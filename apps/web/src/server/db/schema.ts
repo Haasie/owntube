@@ -18,6 +18,31 @@ export const users = sqliteTable("users", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+/**
+ * Revocable Bearer tokens for services (e.g. the n8n playback mesh), managed in
+ * Settings. Only a SHA-256 of the token is stored; the token itself is shown
+ * once at creation. `scopes` is a JSON array of API_TOKEN_SCOPES keys.
+ */
+export const apiTokens = sqliteTable(
+  "api_tokens",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    scopes: text("scopes").notNull(),
+    createdAt: integer("created_at").notNull(),
+    lastUsedAt: integer("last_used_at"),
+    revokedAt: integer("revoked_at"),
+  },
+  (t) => [
+    uniqueIndex("api_tokens_hash_uidx").on(t.tokenHash),
+    index("api_tokens_user_idx").on(t.userId),
+  ],
+);
+
 export const userProfile = sqliteTable("user_profile", {
   userId: integer("user_id")
     .primaryKey()

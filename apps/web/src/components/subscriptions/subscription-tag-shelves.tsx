@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { CopyRssUrlButton } from "@/components/feeds/copy-rss-url";
 import { SubscriptionTagShelf } from "@/components/home/home-blocks-client";
 import { useSectionPagePrefs } from "@/components/library/section-options-menu";
 import type { HomeBlockSize } from "@/lib/home-blocks";
@@ -82,6 +83,9 @@ function TagSection({
         </button>
         <span className="text-sm font-normal text-[hsl(var(--muted-foreground))]">
           {count} {count === 1 ? "channel" : "channels"}
+        </span>
+        <span className="ml-auto self-center">
+          <CopyRssUrlButton kind="tag" refId={tag} trigger="more" />
         </span>
       </h2>
       {near ? (

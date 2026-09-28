@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { ApiTokensSection } from "@/components/settings/api-tokens-section";
 import { InstanceSourceHint } from "@/components/settings/instance-source-hint";
 import { RssFeedsSection } from "@/components/settings/rss-feeds-section";
 import { Button } from "@/components/ui/button";
@@ -717,6 +718,8 @@ export function SettingsPanel({
       </section>
 
       <RssFeedsSection />
+
+      <ApiTokensSection />
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Data export / import</h2>
