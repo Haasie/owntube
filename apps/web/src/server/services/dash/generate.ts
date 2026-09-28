@@ -22,6 +22,7 @@ import {
   audioTrackName,
   codecsOf,
   companionDirectSegmentUri,
+  durationSecondsFromFormats,
   fetchAdaptiveFormats,
   fetchVideoCaptions,
   type InvidiousCaption,
@@ -50,18 +51,6 @@ function familyOf(type: string): DashVideoFamily | null {
   if (/av01/i.test(type)) return "av01";
   if (/vp0?9/i.test(type)) return "vp9";
   return null;
-}
-
-/** Stream URLs embed `dur=<seconds>`; cheaper than a second detail fetch. */
-function durationSecondsFromFormats(af: AdaptiveFormat[]): number {
-  for (const f of af) {
-    const m = /[?&]dur=([\d.]+)/.exec(f.url ?? "");
-    if (m?.[1]) {
-      const n = Number.parseFloat(m[1]);
-      if (Number.isFinite(n) && n > 0) return n;
-    }
-  }
-  return 0;
 }
 
 /** The API repeats rows (per host); keep the first of each itag. */

@@ -8,8 +8,18 @@ import {
   getClientAppOrigin,
   installSameOriginMediaFetchGuard,
 } from "@/lib/hls-same-origin";
-import { isIosLikeBrowser } from "@/lib/ios-playback";
 import { getMediaOrigin } from "@/lib/media-origin";
+
+/** Fire-and-forget playback diagnostics to /api/client-log (server stdout). */
+function reportClientLog(payload: Record<string, unknown>): void {
+  try {
+    void fetch("/api/client-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+  } catch {}
+}
 
 /**
  * Audio language renditions from the HLS master (one EXT-X-MEDIA per language
@@ -114,9 +124,10 @@ export function useHlsVodPlayback(
         // adapter's volumechange listener picks up el.muted and shows the
         // unmute affordance, so the viewer can turn sound back on in one tap.
         if (started || v.muted) return;
+        v.dataset.otAutoMuted = "1";
         v.muted = true;
         void v.play().catch(() => {
-          /* retried by the poll/events below */
+          /* retried by the ready events below */
         });
       });
     };
@@ -157,16 +168,17 @@ export function useHlsVodPlayback(
     // Website" mode — both report a real, unmanaged `window.MediaSource`)
     // rejects our byte-range fMP4 VOD manifest natively with
     // MEDIA_ERR_SRC_NOT_SUPPORTED. hls.js parses the manifest itself and plays
-    // it over real MSE there. On iPhone/iPad (WebKit), modern iOS (17.4+, 18)
-    // exposes `window.MediaSource` but MSE/MMS stalls when using hls.js.
-    // Native HLS works reliably on iOS, so we always prefer native on iOS devices.
-    const isIos = isIosLikeBrowser();
+    // it over real MSE there. So we only take the native path when the browser
+    // has NO real MediaSource — i.e. iPhone/iPad-class WebKit that exposes only
+    // ManagedMediaSource (where hls.js would fall back to MMS and stall the
+    // video track, and where native HLS works). See use-dash-playback for the
+    // sibling MMS/MSE notes.
     const hasRealMediaSource =
       typeof window !== "undefined" && "MediaSource" in window;
     const canNative =
       video.canPlayType("application/vnd.apple.mpegurl") !== "" ||
       video.canPlayType("application/x-mpegURL") !== "";
-    if (canNative && (isIos || !hasRealMediaSource)) {
+    if (canNative && !hasRealMediaSource) {
       // Language renditions surface on WebKit's AudioTrackList. The manifest
       // marks the original DEFAULT=YES (see hls/generate.ts), but iOS's player
       // still starts on a dub matching the system language (an English iPhone
@@ -221,74 +233,28 @@ export function useHlsVodPlayback(
       trackEvents?.addEventListener("addtrack", syncNativeAudio);
       trackEvents?.addEventListener("removetrack", syncNativeAudio);
       trackEvents?.addEventListener("change", syncNativeAudio);
-      let loaded = false;
-      let watchdogTimer: number | null = null;
-
-      const reportClientLog = (
-        eventType: string,
-        details?: Record<string, unknown>,
-      ) => {
-        try {
-          void fetch("/api/client-log", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              component: "useHlsVodPlayback-native",
-              src,
-              eventType,
-              readyState: video.readyState,
-              networkState: video.networkState,
-              error: video.error
-                ? { code: video.error.code, message: video.error.message }
-                : null,
-              ...details,
-            }),
-          }).catch(() => {});
-        } catch {}
-      };
-
       const onLoaded = () => {
-        loaded = true;
-        if (watchdogTimer !== null) {
-          window.clearTimeout(watchdogTimer);
-          watchdogTimer = null;
-        }
         applyStartAndPlay();
         syncNativeAudio();
       };
       const onError = () => {
-        if (watchdogTimer !== null) {
-          window.clearTimeout(watchdogTimer);
-          watchdogTimer = null;
-        }
-        reportClientLog("native_hls_error");
+        reportClientLog({
+          component: "useHlsVodPlayback-native",
+          src,
+          eventType: "native_hls_error",
+          readyState: video.readyState,
+          networkState: video.networkState,
+          error: video.error
+            ? { code: video.error.code, message: video.error.message }
+            : null,
+        });
         onFatalErrorRef.current?.();
       };
       video.addEventListener("loadedmetadata", onLoaded, { once: true });
       video.addEventListener("error", onError);
       video.src = src;
       video.load();
-
-      // Watchdog: on iOS WebKit, AVPlayer can stall or fail silently on unsupported/rejected HLS
-      // manifests without dispatching an HTMLMediaElement error event.
-      // If loadedmetadata hasn't fired within 3.5s and readyState is HAVE_NOTHING (0), trigger fatal fallback.
-      watchdogTimer = window.setTimeout(() => {
-        if (
-          !loaded &&
-          (video.readyState === 0 ||
-            !Number.isFinite(video.duration) ||
-            video.duration === 0)
-        ) {
-          reportClientLog("watchdog_timeout_fallback", { timeoutMs: 3500 });
-          onFatalErrorRef.current?.();
-        }
-      }, 3500);
-
       return () => {
-        if (watchdogTimer !== null) {
-          window.clearTimeout(watchdogTimer);
-          watchdogTimer = null;
-        }
         setAudioImplRef.current = () => {};
         trackEvents?.removeEventListener("addtrack", syncNativeAudio);
         trackEvents?.removeEventListener("removetrack", syncNativeAudio);
@@ -322,19 +288,13 @@ export function useHlsVodPlayback(
       hlsRef.current = hls;
       hls.on(HlsCtor.Events.ERROR, (_e, data) => {
         if (data.fatal) {
-          try {
-            void fetch("/api/client-log", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                component: "useHlsVodPlayback-hlsjs",
-                src,
-                eventType: "fatal_error",
-                errorType: data.type,
-                details: data.details,
-              }),
-            }).catch(() => {});
-          } catch {}
+          reportClientLog({
+            component: "useHlsVodPlayback-hlsjs",
+            src,
+            eventType: "fatal_error",
+            errorType: data.type,
+            details: data.details,
+          });
           onFatalErrorRef.current?.();
         }
       });
@@ -374,8 +334,7 @@ export function useHlsVodPlayback(
       releaseFetchGuard();
       hls?.destroy();
       hlsRef.current = null;
-      // Only attached when hls.js isn't supported (native-HLS-less browser
-      // fallback) — harmless no-op otherwise since it was never added.
+      // Only attached on the no-hls.js fallback path; a no-op otherwise.
       video.removeEventListener("loadedmetadata", applyStartAndPlay);
       const v = videoRef.current;
       if (v) {

@@ -190,6 +190,18 @@ export function fetchVideoCaptions(
   return fetchVideoPayload(videoId).then((p) => p.captions);
 }
 
+/** Stream URLs embed `dur=<seconds>`; cheaper than a second detail fetch. */
+export function durationSecondsFromFormats(af: AdaptiveFormat[]): number {
+  for (const f of af) {
+    const m = /[?&]dur=([\d.]+)/.exec(f.url ?? "");
+    if (m?.[1]) {
+      const n = Number.parseFloat(m[1]);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
+  return 0;
+}
+
 /** The `sidx` box: per-fragment byte size + duration, plus where media begins. */
 export type Sidx = {
   timescale: number;
@@ -244,23 +256,7 @@ async function fetchSidx(streamUrl: string, indexRange: string): Promise<Sidx> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), INVIDIOUS_TIMEOUT_MS);
   try {
-    let targetUrl = streamUrl;
-    try {
-      const u = new URL(streamUrl);
-      const pub = invidiousPublicBase();
-      const inv = invidiousBase();
-      if (inv) {
-        const pubHost = pub ? new URL(pub).host : null;
-        if (pubHost && u.host === pubHost) {
-          const invUrl = new URL(inv);
-          u.protocol = invUrl.protocol;
-          u.host = invUrl.host;
-          u.port = invUrl.port;
-          targetUrl = u.toString();
-        }
-      }
-    } catch {}
-    const r = await fetch(targetUrl, {
+    const r = await fetch(streamUrl, {
       headers: { range: `bytes=${indexRange}` },
       signal: controller.signal,
       cache: "no-store",
@@ -354,15 +350,14 @@ export function pickAudioTracks(af: AdaptiveFormat[]): AudioTrackVariant[] {
 
   const groups = new Map<string, Row[]>();
   for (const r of rows) {
-    // Rows without lang or acont describe the same lone track (e.g. DRC variants or multi-host repeats).
-    const key =
-      r.x.lang || r.x.acont ? `${r.x.lang ?? ""}|${r.x.acont ?? ""}` : "";
+    // Rows without xtags all describe the same lone track (multi-host repeats).
+    const key = r.x.raw ? `${r.x.lang ?? ""}|${r.x.acont ?? ""}` : "";
     const g = groups.get(key);
     if (g) g.push(r);
     else groups.set(key, [r]);
   }
 
-  let chosen = Array.from(groups.values()).map(
+  const chosen = Array.from(groups.values()).map(
     (g) =>
       g.sort(
         (a, b) =>
@@ -375,34 +370,10 @@ export function pickAudioTracks(af: AdaptiveFormat[]): AudioTrackVariant[] {
       (a.x.acont === "original" ? 0 : 1) - (b.x.acont === "original" ? 0 : 1),
   );
 
-  // Limit HLS audio renditions to avoid overwhelming Apple AVPlayer preroll:
-  // AVPlayer validates and probes every declared audio rendition before starting playback.
-  // When a video has 20-35 auto-translated machine dubs, concurrent byte-range SIDX fetches
-  // exhaust the browser HTTP connection pool and exceed AVPlayer's preroll timeout (~10s),
-  // leaving the player stuck at 0:00.
-  // Keep the original track, plus preferred viewer languages (e.g. Dutch, English) if present,
-  // up to a max of 3 tracks total.
-  if (chosen.length > 3) {
-    const isPriorityLang = (lang?: string | null) => {
-      if (!lang) return false;
-      const code = lang.split(/[-_]/)[0]?.toLowerCase();
-      return code === "nl" || code === "en";
-    };
-    const original = chosen[0];
-    const alternates = chosen.slice(1);
-    const priority = alternates.filter((r) => isPriorityLang(r.x.lang));
-    const nonPriority = alternates.filter((r) => !isPriorityLang(r.x.lang));
-    chosen = [original, ...priority, ...nonPriority].filter((r): r is Row => Boolean(r)).slice(0, 3);
-  }
-
-  const hasExplicitOriginal = chosen.some((r) => r.x.acont === "original");
   return chosen.map((r, i) => ({
     format: r.f,
     lang: r.x.lang,
-    isOriginal:
-      r.x.acont === "original" ||
-      (!hasExplicitOriginal && i === 0) ||
-      chosen.length === 1,
+    isOriginal: r.x.acont === "original" || chosen.length === 1,
     isDefault: i === 0,
     xtags: r.x.raw,
   }));
@@ -428,11 +399,52 @@ export function audioTrackName(t: AudioTrackVariant, index: number): string {
   return t.isOriginal && t.lang ? `${name} (Original)` : name;
 }
 
+function mediaPlaylistUri(t: AudioTrackVariant): string {
+  const xt = t.xtags ? `&xtags=${encodeURIComponent(t.xtags)}` : "";
+  return `media.m3u8?itag=${t.format.itag}${xt}`;
+}
+
+/**
+ * How `/captions/<videoId>` identifies a caption track upstream: by language
+ * when known, else by label. Same rule as the DASH manifest's subtitle sets.
+ */
+function captionQuery(caption: InvidiousCaption): string | null {
+  const lang = (caption.language_code ?? caption.languageCode)?.trim();
+  if (lang) return `lang=${encodeURIComponent(lang)}`;
+  const label = caption.label?.trim();
+  if (label) return `label=${encodeURIComponent(label)}`;
+  return null;
+}
+
+/** Quoted-string attribute values may not contain `"` or line breaks. */
+function hlsAttributeText(value: string): string {
+  return value.replace(/["\r\n]/g, "");
+}
+
+/**
+ * One SUBTITLES rendition per caption track, so native HLS players (AVPlayer)
+ * offer the captions the web player already shows. Never DEFAULT: captions
+ * start off unless the viewer — or the system's closed-captions setting,
+ * which honours AUTOSELECT — asks for them.
+ */
+function subtitleRenditions(captions: InvidiousCaption[]): string[] {
+  return captions.flatMap((caption) => {
+    const query = captionQuery(caption);
+    if (!query) return [];
+    const lang = (caption.language_code ?? caption.languageCode)?.trim();
+    const name = hlsAttributeText(caption.label?.trim() || lang || "Captions");
+    const language = lang ? `,LANGUAGE="${hlsAttributeText(lang)}"` : "";
+    return [
+      `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="${name}"${language},DEFAULT=NO,AUTOSELECT=YES,URI="subtitles.m3u8?${query}"`,
+    ];
+  });
+}
 
 /** Pure master-playlist builder (exported for tests). */
 export function buildMasterPlaylist(
   videos: AdaptiveFormat[],
   audioTracks: AudioTrackVariant[],
+  captions: InvidiousCaption[] = [],
 ): string {
   const defaultAudio =
     audioTracks.find((t) => t.isDefault) ??
@@ -440,24 +452,28 @@ export function buildMasterPlaylist(
   const audioCodec = codecsOf(defaultAudio.format.type);
   const audioBitrate = Number(defaultAudio.format.bitrate) || 0;
   const lines = ["#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-INDEPENDENT-SEGMENTS"];
-  // Single robust audio rendition: Apple AVPlayer on iOS WebKit strictly requires
-  // consistent timeline alignment across renditions and fails when multiple
-  // machine-translated dubs (with divergent sidx durations and query-encoded URIs)
-  // are declared in EXT-X-MEDIA. Serving the single chosen original audio track
-  // ensures 100% reliable hardware-accelerated playback across all iOS WebKit browsers.
-  // (Multi-language selection still works on the native-HLS path — see
-  // useHlsVodPlayback's WebKit AudioTrackList handling — this only affects the
-  // synthesized-manifest path's *master playlist* audio declarations.)
-  const langAttr = defaultAudio.lang ? `,LANGUAGE="${defaultAudio.lang}"` : "";
-  lines.push(
-    `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES${langAttr},CHANNELS="2",URI="media.m3u8?itag=140"`,
-  );
+  for (const [i, t] of audioTracks.entries()) {
+    const name = audioTracks.length === 1 ? "Audio" : audioTrackName(t, i);
+    const language = t.lang ? `,LANGUAGE="${t.lang}"` : "";
+    // AUTOSELECT only on the default (original) track: Apple's native player
+    // lets an AUTOSELECT=YES rendition that matches the system language beat
+    // DEFAULT=YES, so an English iPhone started Dutch videos on the English
+    // auto-dub. Dubs stay manually selectable (the spec requires
+    // AUTOSELECT=YES on the DEFAULT=YES rendition).
+    const flag = t.isDefault ? "YES" : "NO";
+    lines.push(
+      `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="${name}"${language},DEFAULT=${flag},AUTOSELECT=${flag},URI="${mediaPlaylistUri(t)}"`,
+    );
+  }
+  const subtitles = subtitleRenditions(captions);
+  lines.push(...subtitles);
+  const subtitlesGroup = subtitles.length > 0 ? `,SUBTITLES="subs"` : "";
   for (const v of videos) {
     const bandwidth = (Number(v.bitrate) || 0) + audioBitrate;
     const res = v.size ? `,RESOLUTION=${v.size}` : "";
     const codecs = [codecsOf(v.type), audioCodec].filter(Boolean).join(",");
     lines.push(
-      `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth}${res},CODECS="${codecs}",AUDIO="aud"`,
+      `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth}${res},CODECS="${codecs}",AUDIO="aud"${subtitlesGroup}`,
     );
     lines.push(`media.m3u8?itag=${v.itag}`);
   }
@@ -472,7 +488,55 @@ export async function generateMasterPlaylist(videoId: string): Promise<string> {
   if (videos.length === 0 || audioTracks.length === 0) {
     throw new Error("no AVC video + AAC audio streams");
   }
-  return buildMasterPlaylist(videos, audioTracks);
+  // Subtitles are best-effort, and need the duration for their playlist: a
+  // caption lookup failure or an unknown duration costs the captions, not
+  // the playback.
+  const captions =
+    durationSecondsFromFormats(af) > 0
+      ? await fetchVideoCaptions(videoId).catch(() => [] as InvidiousCaption[])
+      : [];
+  return buildMasterPlaylist(videos, audioTracks, captions);
+}
+
+/**
+ * Pure subtitle-playlist builder (exported for tests): the whole WebVTT file
+ * from `/captions/<videoId>` as one segment spanning the video. HLS wants
+ * subtitles as a media playlist; one segment is enough for VOD, and AVPlayer
+ * lines its cues up with the video's own timeline.
+ */
+export function buildSubtitlePlaylist(
+  videoId: string,
+  query: string,
+  durationSeconds: number,
+): string {
+  const duration = durationSeconds.toFixed(3);
+  return `${[
+    "#EXTM3U",
+    "#EXT-X-VERSION:3",
+    `#EXT-X-TARGETDURATION:${Math.ceil(durationSeconds)}`,
+    "#EXT-X-MEDIA-SEQUENCE:0",
+    "#EXT-X-PLAYLIST-TYPE:VOD",
+    `#EXTINF:${duration},`,
+    `/captions/${encodeURIComponent(videoId)}?${query}`,
+    "#EXT-X-ENDLIST",
+  ].join("\n")}\n`;
+}
+
+/** Subtitle playlist for the caption track `lang` (or, lacking one, `label`) names. */
+export async function generateSubtitlePlaylist(
+  videoId: string,
+  caption: { lang?: string; label?: string },
+): Promise<string> {
+  const query = captionQuery({
+    languageCode: caption.lang,
+    label: caption.label,
+  });
+  if (!query) throw new Error("missing lang or label");
+  const durationSeconds = durationSecondsFromFormats(
+    await fetchAdaptiveFormats(videoId),
+  );
+  if (durationSeconds <= 0) throw new Error("unknown video duration");
+  return buildSubtitlePlaylist(videoId, query, durationSeconds);
 }
 
 /** Parsed `sidx` per (videoId, itag); dedupes the byte-range fetch across the
@@ -509,35 +573,22 @@ export async function generateMediaPlaylist(
   xtags?: string | null,
 ): Promise<string> {
   const af = await fetchAdaptiveFormats(videoId);
-  let f: AdaptiveFormat | undefined;
-  if (String(itag) === "140" && !xtags) {
-    const audios = pickAudioTracks(af);
-    f = audios[0]?.format;
-  }
-  if (!f) {
-    f = af.find(
-      (x) =>
-        String(x.itag) === String(itag) &&
-        (!xtags || audioXtagsOf(x.url).raw === xtags),
-    );
-  }
+  const f = af.find(
+    (x) =>
+      String(x.itag) === String(itag) &&
+      (!xtags || audioXtagsOf(x.url).raw === xtags),
+  );
   if (!f || !f.init || !f.index) throw new Error(`itag ${itag} not found`);
-  const sidxKey = f.url
-    ? `${itag}:${audioXtagsOf(f.url).raw ?? "default"}`
-    : (xtags ? `${itag}:${xtags}` : itag);
   const sidx = await getSidx(
     videoId,
-    sidxKey,
+    xtags ? `${itag}:${xtags}` : itag,
     f.url,
     f.index,
   );
-  const uri = xtags
-    ? `stream.mp4?itag=${encodeURIComponent(itag)}&xtags=${encodeURIComponent(xtags)}`
-    : `stream.mp4?itag=${encodeURIComponent(itag)}`;
+  const uri = segmentUri(f.url);
   const [ia, ib] = f.init.split("-").map(Number);
-  const targetDuration = Math.max(
-    10,
-    Math.ceil(sidx.refs.reduce((m, r) => Math.max(m, r.duration), 0)),
+  const targetDuration = Math.ceil(
+    sidx.refs.reduce((m, r) => Math.max(m, r.duration), 0),
   );
   const lines = [
     "#EXTM3U",
@@ -557,42 +608,4 @@ export async function generateMediaPlaylist(
   }
   lines.push("#EXT-X-ENDLIST");
   return `${lines.join("\n")}\n`;
-}
-
-/** Resolves an adaptive format row for HLS media segment proxying. */
-export async function getAdaptiveFormat(
-  videoId: string,
-  itag: string,
-  xtags?: string | null,
-): Promise<AdaptiveFormat | undefined> {
-  const af = await fetchAdaptiveFormats(videoId);
-  if (String(itag) === "140" && !xtags) {
-    const audios = pickAudioTracks(af);
-    return audios[0]?.format;
-  }
-  return af.find(
-    (x) =>
-      String(x.itag) === String(itag) &&
-      (!xtags || audioXtagsOf(x.url).raw === xtags),
-  );
-}
-
-/** Rewrites public Invidious base to internal container URL when applicable. */
-export function rewriteUpstreamUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    const pub = invidiousPublicBase();
-    const inv = invidiousBase();
-    if (inv) {
-      const pubHost = pub ? new URL(pub).host : null;
-      if (pubHost && u.host === pubHost) {
-        const invUrl = new URL(inv);
-        u.protocol = invUrl.protocol;
-        u.host = invUrl.host;
-        u.port = invUrl.port;
-        return u.toString();
-      }
-    }
-  } catch {}
-  return url;
 }

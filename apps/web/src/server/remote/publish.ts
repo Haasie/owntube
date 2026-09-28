@@ -13,7 +13,7 @@ import {
   users,
   watchQueue,
 } from "@/server/db/schema";
-import { ensureRssPass, sha256Hex } from "@/server/remote/rss-pass";
+import { ensureRssPass, feedToken, sha256Hex } from "@/server/remote/rss-pass";
 import { getChannelRssEntries } from "@/server/rss/cache";
 import { fetchVideoDetail } from "@/server/services/proxy";
 
@@ -470,6 +470,8 @@ export type FeedOwnerCredential = {
   username: string;
   /** SHA-256 hex of the user's RSS password — the plaintext never leaves home. */
   passSha256: string;
+  /** Secret feed-URL path segment derived from the RSS password. */
+  feedToken: string;
 };
 
 /** Build every user's feed snapshots plus the credential set that unlocks them. */
@@ -494,7 +496,12 @@ export async function buildAllFeeds(
   for (const u of userRows) {
     // The full email — unique by schema, so usernames can't collide.
     const username = u.email;
-    creds.push({ username, passSha256: sha256Hex(ensureRssPass(db, u.id)) });
+    const pass = ensureRssPass(db, u.id);
+    creds.push({
+      username,
+      passSha256: sha256Hex(pass),
+      feedToken: feedToken(pass),
+    });
     const { feeds, refs } = await buildFeedsForUser(db, u.id, username, opts);
     recordPublishedFeeds(db, u.id, refs);
     opts.onLog?.(
@@ -548,6 +555,7 @@ export async function publishFeeds(
       authorization: `Bearer ${options.secret}`,
     },
     body: JSON.stringify({ feeds, users: feedUsers }),
+    signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
