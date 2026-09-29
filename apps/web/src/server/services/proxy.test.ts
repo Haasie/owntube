@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AppDb } from "@/server/db/client";
 import { videoCache } from "@/server/db/schema";
 import { UpstreamUnavailableError } from "@/server/errors/upstream-unavailable";
 import {
@@ -10,7 +11,10 @@ import {
   fetchVideoDetail,
   searchVideos,
 } from "@/server/services/proxy";
-import { shortsFeedCacheKey } from "@/server/services/proxy/cache";
+import {
+  channelCacheKey,
+  shortsFeedCacheKey,
+} from "@/server/services/proxy/cache";
 import { resetRateLimiterForTests } from "@/server/services/rate-limiter";
 import { createTestDb } from "@/test/db";
 
@@ -127,6 +131,35 @@ describe("searchVideos", () => {
     // Serve-stale-first: the answer comes from cache before upstream is tried,
     // so there is no upstream-failure warning to surface.
     expect(stale.warning).toBeUndefined();
+    sqlite.close();
+  });
+
+  it("fetches live instead of answering with a months-old search row", async () => {
+    const { db, sqlite } = createTestDb();
+    process.env.INVIDIOUS_BASE_URL = "https://inv.test";
+    const searchHit = (videoId: string, title: string) =>
+      new Response(
+        JSON.stringify([
+          {
+            type: "video",
+            videoId,
+            title,
+            author: "A",
+            authorId: "UCa",
+            videoThumbnails: [{ url: "https://example.com/t.jpg" }],
+            lengthSeconds: 5,
+          },
+        ]),
+      );
+
+    vi.mocked(fetch).mockResolvedValueOnce(searchHit("dQw4w9WgXcQ", "Old"));
+    await searchVideos(db, { q: "cache-me", limit: 10 });
+    db.update(videoCache).set({ expiresAt: 0, fetchedAt: 1 }).run();
+
+    vi.mocked(fetch).mockResolvedValueOnce(searchHit("9bZkp7q19f0", "New"));
+    const r = await searchVideos(db, { q: "cache-me", limit: 10 });
+    expect(r.sourceUsed).toBe("invidious");
+    expect(r.videos[0]?.videoId).toBe("9bZkp7q19f0");
     sqlite.close();
   });
 
@@ -543,6 +576,95 @@ describe("fetchChannelPage", () => {
     expect(page.videos.find((v) => v.videoId === "livestream1")?.isLive).toBe(
       true,
     );
+    sqlite.close();
+  });
+  function mockChannelUpstream(title: string) {
+    vi.mocked(fetch).mockImplementation((input) => {
+      const u = String(input);
+      if (u.includes("inv.test/api/v1/channels/UCchan")) {
+        if (u.includes("/videos")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                videos: [
+                  {
+                    type: "video",
+                    videoId: "newupload01",
+                    title,
+                    authorId: "UCchan",
+                    author: "Artist",
+                  },
+                ],
+              }),
+            ),
+          );
+        }
+        if (u.includes("/streams")) {
+          return Promise.resolve(new Response(JSON.stringify({ videos: [] })));
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ authorId: "UCchan", author: "Artist" }),
+          ),
+        );
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${u}`));
+    });
+  }
+
+  function seedChannelPage(db: AppDb, fetchedAgoSec: number) {
+    const now = Math.floor(Date.now() / 1000);
+    db.insert(videoCache)
+      .values({
+        cacheKey: channelCacheKey({ channelId: "UCchan" }),
+        source: "invidious",
+        kind: "channel",
+        payloadJson: JSON.stringify({
+          channelId: "UCchan",
+          name: "Artist",
+          videos: [{ videoId: "olduploadxx", title: "Old upload" }],
+          continuation: null,
+          sourceUsed: "invidious",
+        }),
+        fetchedAt: now - fetchedAgoSec,
+        expiresAt: now - 60,
+      })
+      .run();
+  }
+
+  it("answers a recently expired channel page from cache while it refetches", async () => {
+    const { db, sqlite } = createTestDb();
+    process.env.INVIDIOUS_BASE_URL = "https://inv.test";
+    seedChannelPage(db, 60 * 60);
+    mockChannelUpstream("New upload");
+
+    const page = await fetchChannelPage(db, { channelId: "UCchan" });
+    expect(page.stale).toBe(true);
+    expect(page.videos[0]?.videoId).toBe("olduploadxx");
+    sqlite.close();
+  });
+
+  it("fetches live instead of answering with a months-old channel page", async () => {
+    const { db, sqlite } = createTestDb();
+    process.env.INVIDIOUS_BASE_URL = "https://inv.test";
+    seedChannelPage(db, 60 * 24 * 60 * 60);
+    mockChannelUpstream("New upload");
+
+    const page = await fetchChannelPage(db, { channelId: "UCchan" });
+    expect(page.sourceUsed).toBe("invidious");
+    expect(page.videos[0]?.videoId).toBe("newupload01");
+    sqlite.close();
+  });
+
+  it("still falls back to a months-old channel page when upstream is down", async () => {
+    const { db, sqlite } = createTestDb();
+    process.env.INVIDIOUS_BASE_URL = "https://inv.test";
+    seedChannelPage(db, 60 * 24 * 60 * 60);
+    vi.mocked(fetch).mockRejectedValue(new Error("down"));
+
+    const page = await fetchChannelPage(db, { channelId: "UCchan" });
+    expect(page.stale).toBe(true);
+    expect(page.videos[0]?.videoId).toBe("olduploadxx");
     sqlite.close();
   });
 });

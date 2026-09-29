@@ -2,7 +2,7 @@ import { invidiousPortCollidesWithNextApp } from "@/lib/invidious-port-collision
 import type { AppDb } from "@/server/db/client";
 import {
   readFreshCacheRow,
-  readLatestCacheRow,
+  readRecentCacheRow,
   registerInFlight,
   writeCache,
 } from "@/server/services/proxy/cache";
@@ -187,10 +187,10 @@ export async function fetchVideoComments(
 
   // Cache-only (SSR prefetch): never block the watch page on an upstream
   // comments fetch. Serve stale if we have any; otherwise signal a miss so the
-  // prefetch doesn't seed the query with empty data — the client fetches on
-  // mount exactly as before.
+  // prefetch doesn't seed the query with empty (or long-outdated) data — the
+  // client fetches on mount exactly as before.
   if (opts?.cacheOnly) {
-    const stale = readCommentsCacheRow(readLatestCacheRow(db, key));
+    const stale = readCommentsCacheRow(readRecentCacheRow(db, key));
     if (stale) return stale;
     throw new CommentsCacheMissError();
   }
@@ -204,7 +204,7 @@ export async function fetchVideoComments(
   })();
   registerInFlight(inFlightComments, key, task);
 
-  const stale = readCommentsCacheRow(readLatestCacheRow(db, key));
+  const stale = readCommentsCacheRow(readRecentCacheRow(db, key));
   if (stale) return stale;
   return task;
 }

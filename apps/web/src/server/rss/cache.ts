@@ -11,6 +11,7 @@ import {
   nowUnix,
   readFreshCacheRow,
   readLatestCacheRow,
+  readRecentCacheRow,
   registerInFlight,
   writeCache,
 } from "@/server/services/proxy/cache";
@@ -235,9 +236,10 @@ export async function refreshChannelRss(
 }
 
 /**
- * Channel uploads RSS entries, SQLite-first: fresh row → return; stale row →
- * return immediately and revalidate in the background; no row (never-seen
- * channel) → block on the live fetch once.
+ * Channel uploads RSS entries, SQLite-first: fresh row → return; recently
+ * stale row → return immediately and revalidate in the background; no recent
+ * row (never-seen or long-unvisited channel) → block on the live fetch, which
+ * falls back to the old row if upstream fails.
  */
 export async function getChannelRssEntries(
   db: AppDb,
@@ -249,7 +251,7 @@ export async function getChannelRssEntries(
     const entries = parseRssRow(fresh.payloadJson);
     if (entries) return entries;
   }
-  const stale = readLatestCacheRow(db, key);
+  const stale = readRecentCacheRow(db, key);
   const task = refreshChannelRss(db, channelId);
   if (stale) {
     const entries = parseRssRow(stale.payloadJson);
@@ -329,7 +331,7 @@ export async function getLongFormWindow(
   const key = longFormCacheKey(channelId);
   const fresh = readFreshCacheRow(db, key);
   if (fresh) return parseLongFormRow(fresh.payloadJson);
-  const stale = readLatestCacheRow(db, key);
+  const stale = readRecentCacheRow(db, key);
   const task = refreshLongFormWindow(db, channelId);
   if (stale) return parseLongFormRow(stale.payloadJson);
   return task;
