@@ -462,6 +462,12 @@ export function WatchScreen({
   // Latest values the timeUpdate listener and unmount cleanup read without
   // re-subscribing on every change.
   const currentTimeRef = useRef(0);
+  /**
+   * Time this source has actually spent playing: settled time, plus the run in
+   * progress since `playingSinceRef` (null while not playing).
+   */
+  const playedMsRef = useRef(0);
+  const playingSinceRef = useRef<number | null>(null);
   const segmentsRef = useRef<SponsorBlockSegment[]>([]);
   const detailRef = useRef<VideoDetail | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
@@ -493,6 +499,8 @@ export function WatchScreen({
     setAudioLangIndex(0);
     detailRef.current = null;
     currentTimeRef.current = 0;
+    playedMsRef.current = 0;
+    playingSinceRef.current = null;
     segmentsRef.current = [];
     pendingSeekRef.current = null;
     shouldPlayAfterReplaceRef.current = true;
@@ -940,10 +948,19 @@ export function WatchScreen({
       // the source reports its duration can land past it, and the player then
       // announces the end of a video that has barely started — resuming from
       // Continue watching put the up-next card over one that had just begun.
+      // Position alone isn't proof (the duration may be unknown yet, or the
+      // position already reads the end), so also require that this source has
+      // actually played: a video sent from the phone got the card before a
+      // single frame had run. Resume never starts within the last
+      // RESUME_END_GUARD_SECONDS, so a real end always clears this.
       const total = detailRef.current?.durationSeconds || player.duration || 0;
       if (total > 0 && currentTimeRef.current < total - END_TOLERANCE_SECONDS) {
         return;
       }
+      const since = playingSinceRef.current;
+      const playedMs =
+        playedMsRef.current + (since === null ? 0 : Date.now() - since);
+      if (playedMs < END_TOLERANCE_SECONDS * 1000) return;
       recordCompleted(videoId, detailRef.current, currentTimeRef.current);
       setEnded(true);
     });
@@ -1043,6 +1060,9 @@ export function WatchScreen({
     const sub = player.addListener(
       "playingChange",
       ({ isPlaying: playing }) => {
+        const since = playingSinceRef.current;
+        if (since !== null) playedMsRef.current += Date.now() - since;
+        playingSinceRef.current = playing ? Date.now() : null;
         // The MediaSession still owns the hardware Play/Pause key while the
         // player sits behind a channel page; don't let it resume there.
         if (playing && !activeRef.current) {
