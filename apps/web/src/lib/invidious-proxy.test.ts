@@ -8,6 +8,7 @@ import {
   rewriteM3u8ForOwnTubeProxy,
   shouldUseInvidiousProxyForUrl,
   toProxiedOrDirectPlayback,
+  toStreamProxyUrl,
 } from "@/lib/invidious-proxy";
 
 describe("shouldUseInvidiousProxyForUrl", () => {
@@ -18,6 +19,46 @@ describe("shouldUseInvidiousProxyForUrl", () => {
     expect(shouldUseInvidiousProxyForUrl(url)).toBe(true);
     expect(toProxiedOrDirectPlayback(url, "http://localhost:3000", "")).toBe(
       "http://localhost:3000/stream/api/manifest/hls_playlist/expire/1/id/x/playlist/index.m3u8",
+    );
+  });
+});
+
+describe("toStreamProxyUrl", () => {
+  const app = "https://owntube.test";
+
+  it("carries a googlevideo hostname as host= so either upstream can fetch it", () => {
+    expect(
+      toStreamProxyUrl(
+        "https://rr3---sn-abc.googlevideo.com/videoplayback?expire=1&c=WEB&sig=a%2Cb",
+        app,
+      ),
+    ).toBe(
+      "https://owntube.test/stream/videoplayback?expire=1&c=WEB&sig=a%2Cb&host=rr3---sn-abc.googlevideo.com",
+    );
+  });
+
+  it("keeps a host= the URL already names", () => {
+    expect(
+      toStreamProxyUrl(
+        "https://rr3---sn-abc.googlevideo.com/videoplayback?host=rr1---sn-xyz.googlevideo.com&c=WEB",
+        app,
+      ),
+    ).toBe(
+      "https://owntube.test/stream/videoplayback?host=rr1---sn-xyz.googlevideo.com&c=WEB",
+    );
+  });
+
+  it("leaves instance-hosted and non-videoplayback URLs as they were", () => {
+    expect(
+      toStreamProxyUrl(
+        "https://invidious.test/videoplayback?c=WEB&host=rr3---sn-abc.googlevideo.com",
+        app,
+      ),
+    ).toBe(
+      "https://owntube.test/stream/videoplayback?c=WEB&host=rr3---sn-abc.googlevideo.com",
+    );
+    expect(toStreamProxyUrl("https://invidious.test/vi/x/hq.jpg", app)).toBe(
+      "https://owntube.test/stream/vi/x/hq.jpg",
     );
   });
 });
