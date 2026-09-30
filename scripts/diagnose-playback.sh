@@ -11,7 +11,11 @@
 #      upstream: the Invidious instance's /videoplayback, the companion's
 #      /companion/videoplayback, and OwnTube's own /stream proxy (the URL the
 #      browser uses), at 0 / 30 / 60 / 90 % into the file
-#   3. the last 30 minutes of media errors from the owntube log
+#   3. the HLS playlist, first video playlist and init segment fetched the way
+#      the iPhone's player (AVPlayer) fetches them: through the reverse proxy,
+#      without the login cookie
+#   4. from the last 30 minutes of the owntube log: which of the iPhone
+#      player's requests reached OwnTube, plus media errors and player reports
 set -eu
 
 VIDEO_ID=${1:-aqz-KE-bpKQ}
@@ -140,8 +144,59 @@ if (verdicts.size === 0) {
 NODE
 
 echo
-echo "== 3. Media errors in the owntube log (last 30 min)"
-docker logs --since 30m "$CONTAINER" 2>&1 |
-  grep -E '\[MEDIA\].* -> [45][0-9][0-9]|trying the next upstream|\[CLIENT-LOG\]' |
-  tail -40 || true
-echo "   (no lines: set OWNTUBE_MEDIA_DEBUG=1 on owntube, reproduce on the phone, run again)"
+echo "== 3. What the iPhone's player gets from $APP_URL without cookies"
+# iOS plays HLS through AVPlayer, which fetches the playlists and segments
+# itself and does not send the page's login cookie. Ask exactly what it asks.
+PUB="$APP_URL/hls/$VIDEO_ID"
+body=$(mktemp)
+trap 'rm -f "$body"' EXIT
+res=$(curl -sS -o "$body" --max-time 20 -w '%{http_code} %{content_type} %{redirect_url}' "$PUB/master.m3u8" 2>&1) ||
+  res="failed: $res"
+echo "   master.m3u8        -> $res"
+if head -c 7 "$body" | grep -q '#EXTM3U'; then
+  media=$(grep -m1 '^media\.m3u8' "$body" || true)
+  if [ -n "$media" ]; then
+    res=$(curl -sS -o "$body" --max-time 30 -w '%{http_code} %{content_type}' "$PUB/$media" 2>&1) || res="failed: $res"
+    echo "   $media -> $res"
+    map=$(sed -n 's/^#EXT-X-MAP:URI="\([^"]*\)",BYTERANGE="\([0-9]*\)@\([0-9]*\)".*/\1 \2 \3/p' "$body" | head -1)
+    if [ -n "$map" ]; then
+      # shellcheck disable=SC2086 # three space-separated fields, none with spaces
+      set -- $map
+      case $1 in /*) seg="$APP_URL$1" ;; http*) seg=$1 ;; *) seg="$PUB/$1" ;; esac
+      range="bytes=$3-$(($3 + $2 - 1))"
+      res=$(curl -sS -o /dev/null --max-time 30 -H "Range: $range" \
+        -w '%{http_code} %{content_type} %{size_download} bytes' "$seg" 2>&1) || res="failed: $res"
+      echo "   init segment ($range) -> $res"
+    fi
+  fi
+  echo "   => the playlist reaches the player without cookies; if native HLS still fails,"
+  echo "      the lines above and section 4 show which request it didn't like"
+else
+  snippet=$(head -c 80 "$body" | tr -s '\n\r\t' ' ')
+  echo "   => NOT a playlist: ${snippet:-the answer above}"
+  echo "      That is the native-HLS failure on the iPhone (MEDIA_ERR_SRC_NOT_SUPPORTED): the"
+  echo "      reverse proxy's login stands between AVPlayer and OwnTube. README_COSMOS.md, step 5."
+fi
+
+echo
+echo "== 4. The owntube log, last 30 min"
+logs=$(docker logs --since 30m "$CONTAINER" 2>&1 || true)
+if ! printf '%s\n' "$logs" | grep -q '\[MEDIA\]'; then
+  echo "   no [MEDIA] lines at all: set OWNTUBE_MEDIA_DEBUG=1 on owntube, try the video on the"
+  echo "   phone, run this again"
+else
+  apple=$(printf '%s\n' "$logs" | grep '\[MEDIA\]' | grep 'AppleCoreMedia' || true)
+  if [ -z "$apple" ]; then
+    echo "   none of the iPhone player's requests (user agent AppleCoreMedia) reached OwnTube:"
+    echo "   they were stopped in front of it (see section 3). Tried the video on the phone first?"
+  else
+    echo "   the iPhone player's requests (AppleCoreMedia), newest last:"
+    printf '%s\n' "$apple" | tail -20 | sed 's/^/     /'
+  fi
+fi
+errors=$(printf '%s\n' "$logs" |
+  grep -E '\[MEDIA\].* -> [45][0-9][0-9]|trying the next upstream|\[CLIENT-LOG\]' | tail -20 || true)
+if [ -n "$errors" ]; then
+  echo "   media errors and player reports:"
+  printf '%s\n' "$errors" | sed 's/^/     /'
+fi
