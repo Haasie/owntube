@@ -108,6 +108,10 @@ services:
       INVIDIOUS_COMPANION_SECRET_KEY: ${COMPANION_KEY}
       OWNTUBE_MEDIA_DEBUG: ${OWNTUBE_MEDIA_DEBUG:-1}
       INVIDIOUS_COMPANION_SABR_VOD: ${INVIDIOUS_COMPANION_SABR_VOD:-fallback}
+      # /stream media bytes from the companion's /companion/videoplayback over
+      # INVIDIOUS_COMPANION_INTERNAL_URL, falling back to Invidious's own
+      # /videoplayback per request; "false" = Invidious only. README_COSMOS.md.
+      INVIDIOUS_STREAM_VIA_COMPANION: ${INVIDIOUS_STREAM_VIA_COMPANION:-true}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

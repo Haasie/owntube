@@ -24,8 +24,22 @@ export function toStreamProxyUrl(
   appOrigin: string,
 ): string {
   const u = new URL(absoluteUrl);
+  // A raw googlevideo URL loses its hostname here, so carry it as `host=`: the
+  // parameter both Invidious's and the companion's `/videoplayback` read to
+  // know which googlevideo server to fetch from. Invidious can guess it from
+  // `fvip`/`mn`; the companion refuses a request without it. Appended rather
+  // than set through `searchParams`, which would re-encode the signed query.
+  let search = u.search;
+  if (
+    u.pathname === "/videoplayback" &&
+    isYoutubeFamilyHostname(u.hostname) &&
+    !u.searchParams.has("host")
+  ) {
+    const host = `host=${encodeURIComponent(u.hostname)}`;
+    search = search ? `${search}&${host}` : `?${host}`;
+  }
   return new URL(
-    `/stream${u.pathname}${u.search}${u.hash}`,
+    `/stream${u.pathname}${search}${u.hash}`,
     appOrigin,
   ).toString();
 }

@@ -21,6 +21,87 @@ function invidiousUpstreamBase(): string {
 }
 
 /**
+ * Where a proxied `videoplayback` request is fetched from, preferred first.
+ *
+ * The companion's `/companion/videoplayback` comes first: the route
+ * Invidious's own player sends every stream through once a companion is
+ * configured, and the one that talks to googlevideo the way YouTube's web
+ * player does (HEAD, then a POST with the byte range as a `range=` parameter
+ * and the minting client's user agent). The Invidious instance's own
+ * `/videoplayback` — a Crystal proxy that re-requests googlevideo with a plain
+ * GET + Range header over IPv4 — stays second, so a request the companion
+ * refuses (e.g. an expired URL) still gets an answer.
+ *
+ * Only over INVIDIOUS_COMPANION_INTERNAL_URL: the public companion path sits
+ * behind the reverse proxy, whose auth would answer with a login page rather
+ * than media. INVIDIOUS_STREAM_VIA_COMPANION=false keeps the instance only.
+ */
+export function videoplaybackUpstreamUrls(
+  inv: string,
+  subpath: string,
+  search: string,
+): URL[] {
+  const instance = new URL(subpath + search, `${inv}/`);
+  if (process.env.INVIDIOUS_STREAM_VIA_COMPANION === "false") return [instance];
+  if (subpath !== "videoplayback") return [instance];
+  const companion = normalizeUpstreamBaseUrl(
+    process.env.INVIDIOUS_COMPANION_INTERNAL_URL,
+  );
+  if (!companion) return [instance];
+  const params = new URLSearchParams(search);
+  // The companion refuses a request that doesn't name the googlevideo host,
+  // and takes a range response's total length from `clen` (answering
+  // `bytes a-b/*` without it — no file size for Safari's progressive player).
+  if (!params.get("host") || !params.get("clen")) return [instance];
+  return [new URL(`${companion}/companion/videoplayback${search}`), instance];
+}
+
+/**
+ * One media fetch against `urls` in order: a network failure or an error
+ * status moves on to the next, and the last one's outcome is returned as is.
+ * Whichever answered is tried first next time, so a chunked transfer that
+ * fell back doesn't pay the failed attempt again on every chunk. Only the
+ * last candidate gets the full retry budget: an earlier one that hangs should
+ * hand over, not hold playback for three header timeouts.
+ */
+function mediaUpstreamFetcher(
+  urls: URL[],
+): (init: RequestInit) => Promise<Response> {
+  let preferred = 0;
+  return async (init) => {
+    const order = [preferred, ...urls.keys()].filter(
+      (i, k, all) => all.indexOf(i) === k,
+    );
+    let lastError: unknown;
+    for (const [k, i] of order.entries()) {
+      const url = urls[i] as URL;
+      const isLast = k === order.length - 1;
+      try {
+        const r = await fetchUpstreamWithRetry(url, init, isLast ? 3 : 1);
+        if (r.status < 400 || isLast) {
+          preferred = i;
+          return r;
+        }
+        await r.body?.cancel().catch(() => {});
+        logMediaFallback(url, `status ${r.status}`);
+      } catch (e) {
+        if (init.signal?.aborted || isLast) throw e;
+        lastError = e;
+        logMediaFallback(url, (e as Error).message);
+      }
+    }
+    throw lastError;
+  };
+}
+
+function logMediaFallback(url: URL, reason: string): void {
+  if (process.env.OWNTUBE_MEDIA_DEBUG !== "1") return;
+  console.warn(
+    `[MEDIA] ${url.origin}${url.pathname} failed (${reason}); trying the next upstream`,
+  );
+}
+
+/**
  * Range/segment fetches through the Invidious→googlevideo proxy occasionally
  * fail to connect or time out (upstream drops). Retry a couple of times with a
  * short backoff so a transient hiccup during a seek doesn't stall playback.
@@ -171,7 +252,7 @@ type PendingChunk = {
  * drain to nobody.
  */
 function chunkedMediaBody(
-  upstreamUrl: URL,
+  fetchMedia: (init: RequestInit) => Promise<Response>,
   headers: Record<string, string>,
   first: Response,
   start: number,
@@ -181,7 +262,7 @@ function chunkedMediaBody(
 ): ReadableStream<Uint8Array> {
   const fetchChunk = (s: number, e: number): PendingChunk => {
     const abort = new AbortController();
-    const promise = fetchUpstreamWithRetry(upstreamUrl, {
+    const promise = fetchMedia({
       headers: { ...headers, range: `bytes=${s}-${e}` },
       cache: "no-store",
       signal: AbortSignal.any([clientSignal, abort.signal]),
@@ -314,9 +395,8 @@ function chunkedMediaBody(
  * Range). See MEDIA_CHUNK_BYTES for why this exists.
  */
 async function maybeChunkedMediaResponse(
-  inv: string,
   subpath: string,
-  search: string,
+  fetchMedia: (init: RequestInit) => Promise<Response>,
   forwardHeaders: Record<string, string>,
   request: Request,
 ): Promise<Response | null> {
@@ -330,14 +410,13 @@ async function maybeChunkedMediaResponse(
     return null;
   }
 
-  const upstreamUrl = new URL(subpath + search, `${inv}/`);
   const firstEnd =
     clientEnd !== null
       ? Math.min(start + MEDIA_CHUNK_BYTES - 1, clientEnd)
       : start + MEDIA_CHUNK_BYTES - 1;
   let first: Response;
   try {
-    first = await fetchUpstreamWithRetry(upstreamUrl, {
+    first = await fetchMedia({
       headers: { ...forwardHeaders, range: `bytes=${start}-${firstEnd}` },
       cache: "no-store",
       signal: request.signal,
@@ -386,7 +465,7 @@ async function maybeChunkedMediaResponse(
     ? Number(firstRangeEnd)
     : Math.min(firstEnd, endTarget);
   const body = chunkedMediaBody(
-    upstreamUrl,
+    fetchMedia,
     forwardHeaders,
     first,
     start,
@@ -396,7 +475,7 @@ async function maybeChunkedMediaResponse(
   );
   const contentLength = endTarget - start + 1;
   const headers: Record<string, string> = {
-    "content-type": first.headers.get("content-type") ?? "video/mp4",
+    "content-type": first.headers.get("content-type") || "video/mp4",
     "cache-control": "public, max-age=60",
     "accept-ranges": "bytes",
     "content-length": String(contentLength),
@@ -414,7 +493,7 @@ function passthroughMediaResponse(r: Response): Response {
     return new Response(r.body, { status: r.status, statusText: r.statusText });
   }
   const headers: Record<string, string> = {
-    "content-type": r.headers.get("content-type") ?? "video/mp4",
+    "content-type": r.headers.get("content-type") || "video/mp4",
     "cache-control": "public, max-age=60",
   };
   for (const h of ["accept-ranges", "content-range"] as const) {
@@ -559,10 +638,11 @@ export async function handleUpstreamMediaRequest(
     }
   }
 
+  const mediaUrls = videoplaybackUpstreamUrls(inv, subpath, search);
+  const fetchMedia = mediaUpstreamFetcher(mediaUrls);
   const chunked = await maybeChunkedMediaResponse(
-    inv,
     subpath,
-    search,
+    fetchMedia,
     forwardHeaders,
     request,
   );
@@ -570,13 +650,20 @@ export async function handleUpstreamMediaRequest(
 
   let r: Response;
   try {
-    r = await fetchInvidiousUpstream(
-      inv,
-      subpath,
-      search,
-      forwardHeaders,
-      request.signal,
-    );
+    r =
+      mediaUrls.length > 1
+        ? await fetchMedia({
+            headers: forwardHeaders,
+            cache: "no-store",
+            signal: request.signal,
+          })
+        : await fetchInvidiousUpstream(
+            inv,
+            subpath,
+            search,
+            forwardHeaders,
+            request.signal,
+          );
   } catch {
     // Client abort (seek away): nothing to answer. 499 mirrors nginx's code.
     if (request.signal.aborted) {
