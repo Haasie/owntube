@@ -57,41 +57,44 @@ Symptoom: de video laadt, toont één beeld (vaak op het hervat-punt) en blijft
 dan staan met de pauzeknop zichtbaar; handmatig scrubben laat hem een paar
 seconden lopen en dan hangt hij weer. Loop dit in deze volgorde af:
 
-1. **Meten waar de bytes stoppen** (read-only, ~1 min):
+1. **Meten waar de bytes stoppen** (read-only, ~1 min). Probeer de video eerst
+   één keer op de iPhone, dan:
 
    ```bash
    cd /home/haasie/owntube
    sh scripts/diagnose-playback.sh <videoId>
    ```
 
-   Sectie 1 toont welk protocol je browser krijgt, sectie 2 dezelfde
-   byte-ranges via Invidious, de companion en OwnTube's eigen `/stream`, en
-   eindigt met een verdict. Alles groen in sectie 2 maar nog steeds hangen →
-   het zit tussen Cosmos en Safari (stap 2).
+   - Sectie 1: welk protocol je browser van Cosmos krijgt.
+   - Sectie 2: dezelfde byte-ranges via Invidious, de companion en OwnTube's
+     eigen `/stream`, met een verdict. Alles sneller dan realtime → de server
+     is in orde, het zit tussen Cosmos en de iPhone.
+   - Sectie 3: de HLS-playlist opgehaald zoals de iPhone-speler (AVPlayer)
+     dat doet, zonder login-cookie. Geen playlist → stap 5.
+   - Sectie 4: welke requests van de iPhone-speler OwnTube echt bereikt
+     hebben, plus fouten en rapporten van de player.
 
 2. **HTTP/2 uit in Cosmos.** Cosmos is een Go-server en zet HTTP/2 automatisch
    aan. Safari's HTTP/2-verbinding loopt vast zodra een media-request wordt
    afgebroken (seek, hervatten, kwaliteitswissel): daarna komt er op die
    verbinding niets meer binnen, tot een nieuwe seek toevallig een nieuwe
    verbinding opent. Precies het patroon uit de recording: hangen op het
-   hervat-punt, na scrubben een paar seconden spelen, weer hangen. Zet op de
-   **cosmos-server** container de env-var:
-
-   ```
-   GODEBUG=http2server=0
-   ```
-
-   Via de Cosmos-UI (ServApps → cosmos-server → Docker → Environment
-   Variables) of door de container opnieuw aan te maken met
-   `-e GODEBUG=http2server=0`; de self-updater neemt env-vars mee bij updates.
-   Alle routes gaan dan over HTTP/1.1. Controleren:
+   hervat-punt, na scrubben een paar seconden spelen, weer hangen.
 
    ```bash
-   curl -so /dev/null -w '%{http_version}\n' https://youtube.haasie.nl/   # verwacht: 1.1
+   sudo bash scripts/cosmos-http2-off.sh          # terugdraaien: --undo
    ```
 
-   Staat er in sectie 1 van de diagnose een `cf-ray`-header, dan komt de
-   HTTP/2 van Cloudflare en niet van Cosmos.
+   Het script zet `GODEBUG=http2server=0` op Cosmos, zodat alle routes over
+   HTTP/1.1 gaan. Het herkent zelf of Cosmos native (systemd `CosmosCloud`) of
+   als Docker-container draait. De Docker-container wordt opnieuw aangemaakt met
+   dezelfde config plus de env-var (sites achter Cosmos zijn ±10–30 s weg); de
+   oude blijft gestopt bewaard en wordt automatisch teruggezet als de nieuwe niet
+   opkomt. Via de Cosmos-UI kan dit niet: Cosmos maakt zijn eigen container
+   opnieuw aan met de oude config. Het script eindigt met het protocol dat
+   `youtube.haasie.nl` nu praat (verwacht: `1.1`). Staat er in sectie 1 van de
+   diagnose een `cf-ray`-header, dan komt de HTTP/2 van Cloudflare en niet van
+   Cosmos.
 
 3. **Smart Shield uit op de OwnTube-route.** Smart Shield rekent elke response
    ≥ 400 als 30 requests (standaard budget 36.000 per uur). Een afgebroken
@@ -106,6 +109,20 @@ seconden lopen en dan hangt hij weer. Loop dit in deze volgorde af:
    `/videoplayback` als de companion weigert. Nooit via
    `invidious.haasie.nl`: daar staat Cosmos-auth voor. Uitzetten:
    `INVIDIOUS_STREAM_VIA_COMPANION=false` in `.env` en `docker compose up -d owntube`.
+
+5. **Media zonder Cosmos-login** — alleen als sectie 3 van de diagnose geen
+   playlist maar een login-redirect laat zien. De iPhone speelt HLS af via
+   AVPlayer, en die stuurt de login-cookie van de pagina niet mee: Cosmos-auth
+   geeft hem een loginpagina, iOS meldt `MEDIA_ERR_SRC_NOT_SUPPORTED` en OwnTube
+   valt terug op 360p progressive. Maak in Cosmos voor `youtube.haasie.nl` per
+   pad een extra route naar `owntube:3000`, met **path prefix** `/hls`,
+   `/stream` en `/captions` (prefix niet strippen), **Cosmos-auth uit** en
+   Smart Shield uit. Afweging: die paden checken zelf geen login, dus wie een
+   URL heeft kan daarmee video via je server laten lopen; de rest van OwnTube
+   blijft achter Cosmos-auth. Draai daarna de diagnose opnieuw: sectie 3 moet
+   `200` en `application/vnd.apple.mpegurl` geven. Nog steeds een redirect?
+   Dan pakt Cosmos de hoofdroute eerst; verschuif de nieuwe routes in de
+   route-lijst en test opnieuw.
 
 ---
 
