@@ -2,6 +2,7 @@ import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { mediaCorsPreflight, withMediaCors } from "@/lib/media-cors";
 import { withMediaDebug } from "@/lib/media-debug";
 import { normalizeUpstreamBaseUrl } from "@/lib/upstream-base-url";
+import { mediaTokenDenial } from "@/server/media/media-token";
 import {
   companionInternalBase,
   withCompanionCheck,
@@ -162,7 +163,8 @@ async function fetchCaptionsVttFromCompanion(
  * invidious-companion, falls back to Invidious, rejects the intermittent Google
  * block page either way, caches good results, and serves `text/vtt` with CORS so
  * a `<track crossorigin>` can attach it. Returns 404 (not garbage) when
- * unavailable from both.
+ * unavailable from both. With MEDIA_TOKEN_REQUIRED=true it needs a valid `mt`
+ * (see server/media/media-token.ts).
  */
 export async function GET(
   request: Request,
@@ -181,6 +183,9 @@ async function handleGET(
   request: Request,
   context: { params: Promise<{ videoId?: string }> },
 ) {
+  const denied = mediaTokenDenial(request);
+  if (denied) return denied;
+
   const inv = invidiousUpstreamBase();
   if (!inv) {
     return new Response("INVIDIOUS_BASE_URL is not configured", {

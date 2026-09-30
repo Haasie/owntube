@@ -1,5 +1,6 @@
 import { mediaCorsPreflight, withMediaCors } from "@/lib/media-cors";
 import { getDb } from "@/server/db/client";
+import { issueMediaToken } from "@/server/media/media-token";
 import {
   fetchCompanionDvrManifest,
   rewriteDvrManifestSegmentUrls,
@@ -257,12 +258,14 @@ async function sabrVodManifest(
   videoId: string,
   audioLang: string | null,
   maxHeight: number | null,
+  mediaToken: string | null,
 ): Promise<string | null> {
   const mpd = await fetchCompanionSabrVodManifest(videoId, audioLang);
   if (!mpd) return null;
   const captionsXml = await vodCaptionAdaptationSets(
     videoId,
     SABR_CAPTION_FIRST_ID,
+    mediaToken,
   );
   return rewriteSabrVodManifest(mpd, videoId, { maxHeight, captionsXml });
 }
@@ -357,7 +360,9 @@ async function serveSabrVodSegment(
  *   /dash/<videoId>/manifest.mpd?video=vp9|av01|avc
  * The video codec family is picked client-side via MSE `isTypeSupported`
  * probes; VP9/AV1 unlock the >1080p rungs the AVC-only HLS path cannot carry.
- * Representations resolve to the same-origin `/invidious/videoplayback` proxy.
+ * Representations resolve to the same-origin `/stream/videoplayback` proxy
+ * and captions to `/captions`, both with a freshly minted media token: this
+ * route sits behind the login (see server/media/media-token.ts).
  *
  * Live broadcasts use `/dash/<videoId>/live.mpd` and its `/live/...` segments
  * instead (see `serveLiveManifest`). With `INVIDIOUS_COMPANION_SABR_VOD` set,
@@ -424,9 +429,15 @@ async function handleGET(
   // Fire and forget: the manifest response shouldn't wait on history.
   void recordPlay(request, videoId);
 
+  const mediaToken = issueMediaToken();
   const sabr = sabrVodMode();
   if (sabr === "always") {
-    const body = await sabrVodManifest(videoId, audioLang, maxHeight);
+    const body = await sabrVodManifest(
+      videoId,
+      audioLang,
+      maxHeight,
+      mediaToken,
+    );
     if (body) return mpdResponse(body);
     // The companion had nothing: fall through to the byte-range formats, which
     // is what a video the connector can't serve would have got anyway.
@@ -439,11 +450,17 @@ async function handleGET(
       audioLang,
       maxHeight,
       includeCaptions,
+      mediaToken,
     );
     return mpdResponse(body);
   } catch (e) {
     if (sabr === "fallback") {
-      const body = await sabrVodManifest(videoId, audioLang, maxHeight);
+      const body = await sabrVodManifest(
+        videoId,
+        audioLang,
+        maxHeight,
+        mediaToken,
+      );
       if (body) return mpdResponse(body);
     }
     // Post-Live-DVR (an ended livestream YouTube hasn't converted to VOD yet)

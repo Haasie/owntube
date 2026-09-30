@@ -112,6 +112,10 @@ services:
       # INVIDIOUS_COMPANION_INTERNAL_URL, falling back to Invidious's own
       # /videoplayback per request; "false" = Invidious only. README_COSMOS.md.
       INVIDIOUS_STREAM_VIA_COMPANION: ${INVIDIOUS_STREAM_VIA_COMPANION:-true}
+      # /hls, /stream and /captions sit outside Cosmos auth (AVPlayer sends no
+      # login cookie), so they only serve URLs carrying a signed media token
+      # OwnTube put into a page; 403 otherwise. README_COSMOS.md, step 5.
+      MEDIA_TOKEN_REQUIRED: ${MEDIA_TOKEN_REQUIRED:-true}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

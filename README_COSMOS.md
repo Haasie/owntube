@@ -117,11 +117,25 @@ seconden lopen en dan hangt hij weer. Loop dit in deze volgorde af:
    valt terug op 360p progressive. Maak in Cosmos voor `youtube.haasie.nl` per
    pad een extra route naar `owntube:3000`, met **path prefix** `/hls`,
    `/stream` en `/captions` (prefix niet strippen), **Cosmos-auth uit** en
-   Smart Shield uit. Afweging: die paden checken zelf geen login, dus wie een
-   URL heeft kan daarmee video via je server laten lopen; de rest van OwnTube
-   blijft achter Cosmos-auth. Draai daarna de diagnose opnieuw: sectie 3 moet
-   `200` en `application/vnd.apple.mpegurl` geven. Nog steeds een redirect?
-   Dan pakt Cosmos de hoofdroute eerst; verschuif de nieuwe routes in de
+   Smart Shield uit.
+
+   Zet daarbij **`MEDIA_TOKEN_REQUIRED=true`** op `owntube` (in deze fork staat
+   dat al in `docker-compose.yml`). Zonder die vlag checken die paden zelf
+   geen login, en kan iedereen die het domein kent je server als
+   YouTube-proxy gebruiken. Met de vlag serveren ze alleen URLs die OwnTube
+   zelf in een pagina heeft gezet: elke media-URL draagt een ondertekend token
+   (`mt=<verloopt>.<handtekening>`, afgeleid van `AUTH_SECRET`, 12 uur
+   geldig), en zonder geldig token antwoorden ze `403`. Thumbnails en avatars
+   blijven open. Een tabblad dat langer openstaat haalt vanzelf een nieuw
+   token op.
+
+   Zet alleen die drie prefixes buiten Cosmos-auth. `/api`, `/dash`,
+   `/yt-hls` en `/enclosure` delen tokens uit en moeten erachter blijven.
+
+   Draai daarna de diagnose opnieuw. Sectie 3 moet zonder token `403` geven
+   (OwnTube weigert zelf) en met token `200` en
+   `application/vnd.apple.mpegurl`. Een redirect in plaats van `403`? Dan
+   pakt Cosmos de hoofdroute eerst: verschuif de nieuwe routes in de
    route-lijst en test opnieuw.
 
 ---

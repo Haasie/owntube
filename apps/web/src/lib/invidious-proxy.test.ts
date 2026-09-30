@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   googlevideoUrlFromInvidiousVideoplaybackReference,
   isYoutubeFamilyHostname,
@@ -8,6 +8,8 @@ import {
   rewriteM3u8ForOwnTubeProxy,
   shouldUseInvidiousProxyForUrl,
   toProxiedOrDirectPlayback,
+  toProxiedOrDirectPoster,
+  toProxiedOrDirectVariants,
   toStreamProxyUrl,
 } from "@/lib/invidious-proxy";
 
@@ -195,5 +197,122 @@ http://127.0.0.1:3001/api/v1/segment/abc`;
         "http://127.0.0.1:3001",
       ),
     ).toContain("http://192.168.1.14:3000/stream/api/v1/segment/abc");
+  });
+});
+
+describe("media token on browser-facing URLs", () => {
+  const app = "https://owntube.test";
+  const TOKEN = `1790000000.${"a".repeat(43)}`;
+  const mt = `mt=${TOKEN}`;
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("goes on /stream and our own /hls, not on /yt-hls or anyone else's URL", () => {
+    vi.stubEnv("INVIDIOUS_BASE_URL", "http://invidious.test");
+    const play = (url: string) =>
+      toProxiedOrDirectPlayback(url, app, "", TOKEN);
+    expect(
+      play("http://invidious.test/videoplayback?itag=18&mt=1727700000"),
+    ).toBe(`${app}/stream/videoplayback?itag=18&mt=1727700000&${mt}`);
+    expect(play("/hls/dQw4w9WgXcQ/master.m3u8")).toBe(
+      `${app}/hls/dQw4w9WgXcQ/master.m3u8?${mt}`,
+    );
+    const hop = play("https://manifest.googlevideo.com/hls_live/x/index.m3u8");
+    expect(hop).toContain("/yt-hls?url=");
+    expect(hop).not.toContain(TOKEN);
+    expect(play("https://cdn.example/live/index.m3u8")).toBe(
+      "https://cdn.example/live/index.m3u8",
+    );
+  });
+
+  it("goes on every source of a variant list", () => {
+    vi.stubEnv("INVIDIOUS_BASE_URL", "http://invidious.test");
+    const [muxed, split] = toProxiedOrDirectVariants(
+      [
+        {
+          t: "muxed",
+          label: "360p",
+          url: "http://invidious.test/videoplayback?itag=18",
+        },
+        {
+          t: "split",
+          label: "1080p",
+          videoUrl: "http://invidious.test/videoplayback?itag=137",
+          audioUrl: "http://invidious.test/videoplayback?itag=140",
+          audioOptions: [
+            {
+              label: "English",
+              url: "http://invidious.test/videoplayback?itag=140",
+            },
+          ],
+        },
+      ],
+      app,
+      "",
+      TOKEN,
+    );
+    expect(muxed?.t === "muxed" && muxed.src).toContain(mt);
+    if (split?.t !== "split") throw new Error("expected a split variant");
+    for (const src of [split.video, split.audio, split.audioTracks[0]?.src]) {
+      expect(src).toContain(mt);
+    }
+  });
+
+  it("stays off posters, which are images", () => {
+    vi.stubEnv("INVIDIOUS_BASE_URL", "http://invidious.test");
+    vi.stubGlobal("window", { __owntubeMediaToken: TOKEN });
+    expect(
+      toProxiedOrDirectPoster(
+        "http://invidious.test/vi/abc/maxres.jpg",
+        app,
+        "",
+      ),
+    ).toBe(`${app}/stream/vi/abc/maxres.jpg`);
+  });
+
+  it("defaults to the page's token in the browser, and to none on the server", () => {
+    const url = "http://invidious.test/videoplayback?itag=18";
+    expect(toStreamProxyUrl(url, app)).toBe(
+      `${app}/stream/videoplayback?itag=18`,
+    );
+    vi.stubGlobal("window", { __owntubeMediaToken: TOKEN });
+    expect(toStreamProxyUrl(url, app)).toBe(
+      `${app}/stream/videoplayback?itag=18&${mt}`,
+    );
+  });
+
+  it("goes on every /stream reference of a rewritten upstream playlist", () => {
+    const inv = "http://invidious.test";
+    const manifest = `${inv}/api/manifest/hls_variant/id/x/index.m3u8`;
+    const body = [
+      "#EXTM3U",
+      `#EXT-X-MAP:URI="${inv}/videoplayback?itag=136&sq=0"`,
+      "#EXTINF:5,",
+      `${inv}/videoplayback?itag=136&sq=1&mt=1727700000`,
+      "#EXTINF:5,",
+      "https://rr1---sn-abc.googlevideo.com/videoplayback/sq/2/file.ts",
+    ].join("\n");
+    const out = rewriteM3u8AllProxies(
+      body,
+      app,
+      "owntube.test",
+      inv,
+      manifest,
+      TOKEN,
+    );
+    expect(out).toContain(
+      `#EXT-X-MAP:URI="${app}/stream/videoplayback?itag=136&sq=0&${mt}"`,
+    );
+    expect(out).toContain(
+      `\n${app}/stream/videoplayback?itag=136&sq=1&mt=1727700000&${mt}\n`,
+    );
+    const hop = out.split("\n").at(-1) ?? "";
+    expect(hop).toContain("/yt-hls?url=");
+    expect(hop).not.toContain(TOKEN);
+    expect(
+      rewriteM3u8AllProxies(body, app, "owntube.test", inv, manifest),
+    ).not.toContain(TOKEN);
   });
 });
