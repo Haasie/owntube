@@ -6,6 +6,7 @@ import {
 } from "@/lib/invidious-proxy";
 import { mediaCorsPreflight, withMediaCors } from "@/lib/media-cors";
 import { headersForYoutubeUpstream } from "@/lib/youtube-upstream-headers";
+import { issueMediaToken } from "@/server/media/media-token";
 
 /** Signed YouTube URLs can be very long; keep a sane upper bound. */
 const MAX_TARGET_URL_LEN = 200_000;
@@ -104,12 +105,15 @@ async function handleGET(request: Request) {
 
   if (isM3U8) {
     const text = await r.text();
+    // This route sits behind the login, so it mints the token the playlist's
+    // `/stream` references need (see server/media/media-token.ts).
     const out = rewriteM3u8AllProxies(
       text,
       appOrigin,
       requestHost,
       undefined,
       target.toString(),
+      issueMediaToken(),
     );
     return new Response(out, {
       status: r.status,

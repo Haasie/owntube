@@ -13,7 +13,8 @@
 #      browser uses), at 0 / 30 / 60 / 90 % into the file
 #   3. the HLS playlist, first video playlist and init segment fetched the way
 #      the iPhone's player (AVPlayer) fetches them: through the reverse proxy,
-#      without the login cookie
+#      without the login cookie (but with a media token when
+#      MEDIA_TOKEN_REQUIRED=true, as the page would hand it)
 #   4. from the last 30 minutes of the owntube log: which of the iPhone
 #      player's requests reached OwnTube, plus media errors and player reports
 set -eu
@@ -44,6 +45,17 @@ const OFFSETS = [0, 0.3, 0.6, 0.9];
 console.log(
   `   INVIDIOUS_STREAM_VIA_COMPANION=${process.env.INVIDIOUS_STREAM_VIA_COMPANION ?? "(unset)"}`,
 );
+console.log(
+  `   MEDIA_TOKEN_REQUIRED=${process.env.MEDIA_TOKEN_REQUIRED ?? "(unset)"}`,
+);
+
+// OwnTube's own /stream and /hls want a media token when MEDIA_TOKEN_REQUIRED
+// is on; take one the way a long-open page does.
+const mt = await fetch(`${self}/api/media-token`)
+  .then((r) => r.json())
+  .then((j) => j.token ?? "")
+  .catch(() => "");
+const withMt = (url) => (mt ? `${url}${url.includes("?") ? "&" : "?"}mt=${mt}` : url);
 
 async function timed(url, range, timeoutMs = 20_000) {
   const t0 = performance.now();
@@ -102,7 +114,7 @@ for (const [kind, f] of picks) {
   const hops = [
     ["instance ", `${inv}${u.pathname}${u.search}`],
     ...(companion ? [["companion", `${companion}/companion/videoplayback${u.search}`]] : []),
-    ["owntube  ", `${self}/stream${u.pathname}${u.search}`],
+    ["owntube  ", withMt(`${self}/stream${u.pathname}${u.search}`)],
   ];
   for (const offset of OFFSETS) {
     const start = Math.floor(clen * offset);
@@ -128,7 +140,7 @@ for (const [kind, f] of picks) {
 }
 
 for (const path of [`/hls/${id}/master.m3u8`]) {
-  const r = await timed(`${self}${path}`);
+  const r = await timed(withMt(`${self}${path}`));
   console.log(`\n   ${path}: ${r.error ?? r.status} in ${Math.round(r.ms)} ms`);
 }
 
@@ -150,7 +162,16 @@ echo "== 3. What the iPhone's player gets from $APP_URL without cookies"
 PUB="$APP_URL/hls/$VIDEO_ID"
 body=$(mktemp)
 trap 'rm -f "$body"' EXIT
-res=$(curl -sS -o "$body" --max-time 20 -w '%{http_code} %{content_type} %{redirect_url}' "$PUB/master.m3u8" 2>&1) ||
+# With MEDIA_TOKEN_REQUIRED=true the page hands the player a media token (mt=)
+# that every URL after the master carries on its own; take one from OwnTube.
+MT=$(docker exec "$CONTAINER" node -e 'fetch(`http://127.0.0.1:${process.env.PORT || 3000}/api/media-token`).then((r) => r.json()).then((j) => process.stdout.write(j.token || "")).catch(() => {})' 2>/dev/null || true)
+QS=""
+if [ -n "$MT" ]; then
+  res=$(curl -sS -o /dev/null --max-time 20 -w '%{http_code}' "$PUB/master.m3u8" 2>&1) || res="failed: $res"
+  echo "   master.m3u8 without mt= -> $res (403: OwnTube refuses URLs it didn't hand out, as it should)"
+  QS="?mt=$MT"
+fi
+res=$(curl -sS -o "$body" --max-time 20 -w '%{http_code} %{content_type} %{redirect_url}' "$PUB/master.m3u8$QS" 2>&1) ||
   res="failed: $res"
 echo "   master.m3u8        -> $res"
 if head -c 7 "$body" | grep -q '#EXTM3U'; then
@@ -171,6 +192,9 @@ if head -c 7 "$body" | grep -q '#EXTM3U'; then
   fi
   echo "   => the playlist reaches the player without cookies; if native HLS still fails,"
   echo "      the lines above and section 4 show which request it didn't like"
+elif grep -q 'media token' "$body"; then
+  echo "   => OwnTube refused the media token (MEDIA_TOKEN_REQUIRED=true): no valid one could be"
+  echo "      taken from $CONTAINER. Is AUTH_SECRET set on it?"
 else
   snippet=$(head -c 80 "$body" | tr -s '\n\r\t' ' ')
   echo "   => NOT a playlist: ${snippet:-the answer above}"

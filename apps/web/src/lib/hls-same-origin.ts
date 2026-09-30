@@ -11,6 +11,11 @@ import {
   toStreamProxyUrl,
   toYouTubeHopProxyUrl,
 } from "@/lib/invidious-proxy";
+import {
+  mediaTokensIn,
+  pageMediaToken,
+  withMediaToken,
+} from "@/lib/media-token";
 
 function invidiousMediaPath(pathname: string): boolean {
   return (
@@ -91,16 +96,27 @@ function isMisresolvedYoutubeOnAppOrigin(url: URL, appOrigin: string): boolean {
  * (the original `rawUrl`, not an "appOrigin"-resolved version of it), or it
  * silently rewrites unrelated same-page requests (tRPC calls, etc.) onto
  * whatever origin the media loader guard happens to be trusting.
+ *
+ * `/stream` URLs leave here with the page's media token (lib/media-token.ts):
+ * the ones this rewrites, and any already-proxied one that arrived without it.
  */
 export function proxyUrlForHlsFetch(
   rawUrl: string,
   appOrigin: string = getClientAppOrigin(),
+  mediaToken: string | null = pageMediaToken(),
 ): string {
   if (!rawUrl?.trim()) return rawUrl;
   rememberYoutubeManifestHost(rawUrl);
   try {
     const resolved = new URL(rawUrl, appOrigin);
     if (isAlreadyProxied(resolved, appOrigin)) {
+      if (
+        mediaToken &&
+        resolved.pathname.startsWith("/stream/") &&
+        mediaTokensIn(resolved.searchParams).length === 0
+      ) {
+        return withMediaToken(resolved.toString(), mediaToken);
+      }
       return resolved.toString();
     }
     if (isMisresolvedYoutubeOnAppOrigin(resolved, appOrigin)) {
@@ -110,7 +126,7 @@ export function proxyUrlForHlsFetch(
       return toYouTubeHopProxyUrl(resolved.toString(), appOrigin);
     }
     if (invidiousMediaPath(resolved.pathname)) {
-      return toStreamProxyUrl(resolved.toString(), appOrigin);
+      return toStreamProxyUrl(resolved.toString(), appOrigin, mediaToken);
     }
     return rawUrl;
   } catch {

@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AdaptiveFormat,
   audioXtagsOf,
   buildMasterPlaylist,
+  buildMediaPlaylist,
   buildSubtitlePlaylist,
   pickAudioTracks,
   serverSideInstanceUrl,
@@ -174,5 +175,102 @@ describe("serverSideInstanceUrl", () => {
       if (prevInv === undefined) delete process.env.INVIDIOUS_BASE_URL;
       else process.env.INVIDIOUS_BASE_URL = prevInv;
     }
+  });
+});
+
+describe("media token in the playlists", () => {
+  const TOKEN = `1790000000.${"a".repeat(43)}`;
+  const mt = `mt=${TOKEN}`;
+  /** Every URI a player would fetch: URI="…" attributes and URL lines. */
+  const references = (m3u8: string) =>
+    m3u8
+      .split("\n")
+      .flatMap((line) =>
+        line.startsWith("#")
+          ? [...line.matchAll(/URI="([^"]+)"/g)].map((m) => m[1] as string)
+          : line
+            ? [line]
+            : [],
+      );
+  const sidx = {
+    timescale: 1000,
+    mediaStart: 2092,
+    refs: [
+      { size: 50_000, duration: 5 },
+      { size: 48_000, duration: 5 },
+    ],
+  };
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("puts it on every child playlist the master lists", () => {
+    const m3u8 = buildMasterPlaylist(
+      [avc720],
+      pickAudioTracks([dubEn, originalNl]),
+      [{ label: "English", language_code: "en" }],
+      TOKEN,
+    );
+    const refs = references(m3u8);
+    expect(refs).toHaveLength(4); // two audio, one subtitle, one variant
+    for (const ref of refs) expect(ref).toContain(mt);
+    expect(m3u8).toContain(`URI="subtitles.m3u8?lang=en&${mt}"`);
+    expect(m3u8).toContain(`\nmedia.m3u8?itag=136&${mt}\n`);
+  });
+
+  it("puts it on the init segment and every fragment of a media playlist", () => {
+    const m3u8 = buildMediaPlaylist(avc720, sidx, TOKEN);
+    const refs = references(m3u8);
+    expect(refs).toHaveLength(3); // EXT-X-MAP + two fragments
+    for (const ref of refs) {
+      expect(ref).toBe(`/stream/videoplayback?itag=136&dur=562.433&${mt}`);
+    }
+  });
+
+  it("keeps googlevideo's own mt next to ours on segment URIs", () => {
+    const withGoogleMt = {
+      ...avc720,
+      url: "https://inv.example/videoplayback?itag=136&mt=1727700000&dur=562.433",
+    };
+    expect(references(buildMediaPlaylist(withGoogleMt, sidx, TOKEN))[0]).toBe(
+      `/stream/videoplayback?itag=136&mt=1727700000&dur=562.433&${mt}`,
+    );
+  });
+
+  it("puts it on the caption file a subtitle playlist points at", () => {
+    expect(
+      references(buildSubtitlePlaylist("abc_DEF-123", "lang=nl", 60, TOKEN)),
+    ).toEqual([`/captions/abc_DEF-123?lang=nl&${mt}`]);
+  });
+
+  it("never hands it to a companion URL (direct segment mode)", () => {
+    vi.stubEnv("INVIDIOUS_DIRECT_HLS_SEGMENTS", "true");
+    const m3u8 = buildMediaPlaylist(
+      {
+        ...avc720,
+        url: "https://inv.example/videoplayback?itag=136&host=rr1---sn-abc.googlevideo.com",
+      },
+      sidx,
+      TOKEN,
+    );
+    expect(m3u8).toContain("https://inv.example/companion/videoplayback?");
+    expect(m3u8).not.toContain(mt);
+  });
+
+  it("leaves every playlist as it was without a token", () => {
+    const master = buildMasterPlaylist([avc720], pickAudioTracks([aacPlain]), [
+      { label: "English", language_code: "en" },
+    ]);
+    expect(master).toBe(
+      buildMasterPlaylist(
+        [avc720],
+        pickAudioTracks([aacPlain]),
+        [{ label: "English", language_code: "en" }],
+        null,
+      ),
+    );
+    expect(master).not.toContain("mt=");
+    expect(buildMediaPlaylist(avc720, sidx)).not.toContain("mt=");
+    expect(buildSubtitlePlaylist("abc_DEF-123", "lang=nl", 60)).not.toContain(
+      "mt=",
+    );
   });
 });

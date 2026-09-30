@@ -1,4 +1,6 @@
 import { mediaCorsPreflight, withMediaCors } from "@/lib/media-cors";
+import { withMediaToken } from "@/lib/media-token";
+import { issueMediaToken } from "@/server/media/media-token";
 import { resolveInvidiousAbsoluteMediaUrl } from "@/server/services/proxy/normalize";
 
 /**
@@ -13,6 +15,8 @@ import { resolveInvidiousAbsoluteMediaUrl } from "@/server/services/proxy/normal
  *
  * Stream URLs are signed and expire (~6h), so we never bake one into a feed:
  * the enclosure points here and we re-resolve on every play. Hence `no-store`.
+ * The redirect carries a fresh media token for `/stream` (see
+ * server/media/media-token.ts), so keep this route behind the login.
  */
 const VIDEO_ID_RE = /^[\w-]{6,20}$/;
 const INVIDIOUS_TIMEOUT_MS = 20_000;
@@ -158,7 +162,10 @@ async function handleGET(
     }
     return new Response(null, {
       status: 302,
-      headers: { location: target, "cache-control": "no-store" },
+      headers: {
+        location: withMediaToken(target, issueMediaToken()),
+        "cache-control": "no-store",
+      },
     });
   } catch (error: unknown) {
     if (controller.signal.aborted) return new Response(null, { status: 499 });

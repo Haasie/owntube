@@ -288,3 +288,44 @@ describe("multi-language audio", () => {
     expect(mpd).toContain('<AdaptationSet id="3" contentType="text"');
   });
 });
+
+describe("media token in the MPD", () => {
+  const TOKEN = `1790000000.${"a".repeat(43)}`;
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("puts it on proxied segments and captions, never on companion URLs", () => {
+    vi.stubEnv("INVIDIOUS_PUBLIC_BASE_URL", "https://inv.example");
+    vi.stubEnv("INVIDIOUS_DIRECT_DASH_SEGMENTS", "split");
+    const withHost = (f: AdaptiveFormat) => ({
+      ...f,
+      url: `${f.url}&host=rr2---sn-abc.googlevideo.com`,
+    });
+    const mpd = buildMpd(
+      [withHost(vp9_2160), withHost(vp9_1080)],
+      pickAudioTracks([withHost(aac)]),
+      562,
+      "dQw4w9WgXcQ",
+      [{ label: "English", languageCode: "en" }],
+      TOKEN,
+    );
+    const baseUrls = [...mpd.matchAll(/<BaseURL>([^<]+)<\/BaseURL>/g)].map(
+      (m) => m[1] as string,
+    );
+    for (const url of baseUrls) {
+      if (url.startsWith("/")) expect(url).toContain(`&amp;mt=${TOKEN}`);
+      else expect(url).not.toContain("mt=");
+    }
+    expect(mpd).toContain(
+      `<BaseURL>/captions/dQw4w9WgXcQ?lang=en&amp;mt=${TOKEN}</BaseURL>`,
+    );
+    expect(mpd).toMatch(/<BaseURL>\/stream\/videoplayback\?itag=313[^<]*mt=/);
+  });
+
+  it("leaves the MPD as it was without a token", () => {
+    vi.stubEnv("INVIDIOUS_DIRECT_DASH_SEGMENTS", "false");
+    const mpd = buildMpd([vp9_1080], aacTrack, 562, "dQw4w9WgXcQ", [
+      { label: "English", languageCode: "en" },
+    ]);
+    expect(mpd).not.toContain("mt=");
+  });
+});

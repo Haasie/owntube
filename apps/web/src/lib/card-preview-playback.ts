@@ -158,6 +158,8 @@ export function cardPreviewPlaybackFromDetail(
   detail: VideoDetail,
   appOrigin: string,
   requestHost: string,
+  /** See toStreamProxyUrl: defaults to the page's token in the browser. */
+  mediaToken?: string | null,
 ): CardPreviewPlayback | null {
   // Post-Live-DVR has no previewable source. Its adaptive/progressive URLs are
   // `yt_live_broadcast` ones that 403 on server-IP replay (same reason as the
@@ -168,24 +170,26 @@ export function cardPreviewPlaybackFromDetail(
   if (detail.isPostLiveDvr) return null;
 
   let ytHopFallback: CardPreviewPlayback | null = null;
+  const proxied = (url: string) =>
+    toProxiedOrDirectPlayback(url, appOrigin, requestHost, mediaToken);
 
   const directMuxed = findPreviewMuxedUrl(detail);
   if (directMuxed) {
-    const src = toProxiedOrDirectPlayback(directMuxed, appOrigin, requestHost);
+    const src = proxied(directMuxed);
     if (!isYouTubeHopSrc(src)) return { kind: "muxed", src };
     ytHopFallback = { kind: "muxed", src };
   }
 
   const silentVideo = findPreviewVideoOnlyUrl(detail);
   if (silentVideo) {
-    const src = toProxiedOrDirectPlayback(silentVideo, appOrigin, requestHost);
+    const src = proxied(silentVideo);
     if (!isYouTubeHopSrc(src)) return { kind: "muxed", src };
     ytHopFallback ??= { kind: "muxed", src };
   }
 
   const raw = buildWatchPlayback(detail);
   if (raw.kind === "hls") {
-    const src = toProxiedOrDirectPlayback(raw.url, appOrigin, requestHost);
+    const src = proxied(raw.url);
     return { kind: "hls", src };
   }
   if (raw.kind === "progressive") {
@@ -193,6 +197,7 @@ export function cardPreviewPlaybackFromDetail(
       raw.variants,
       appOrigin,
       requestHost,
+      mediaToken,
     );
     const pick = pickPreviewProxiedVariant(variants);
     if (pick?.t === "muxed") {

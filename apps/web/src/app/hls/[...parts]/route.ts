@@ -1,5 +1,6 @@
 import { mediaCorsPreflight, withMediaCors } from "@/lib/media-cors";
 import { withMediaDebug } from "@/lib/media-debug";
+import { mediaTokenDenial, passOnMediaToken } from "@/server/media/media-token";
 import {
   generateMasterPlaylist,
   generateMediaPlaylist,
@@ -14,8 +15,12 @@ const VIDEO_ID_RE = /^[\w-]{6,20}$/;
  *   /hls/<videoId>/master.m3u8       -> variants + audio group
  *   /hls/<videoId>/media.m3u8?itag=… -> one stream's byte-range fragments
  *   /hls/<videoId>/subtitles.m3u8?lang=… (or ?label=…) -> one caption track
- * Segments resolve to the `/invidious/videoplayback` proxy, same-origin with
+ * Segments resolve to the `/stream/videoplayback` proxy, same-origin with
  * this route's media origin (see media-origin.ts).
+ *
+ * With MEDIA_TOKEN_REQUIRED=true every playlist needs a valid `mt`, and passes
+ * that same token on to the playlists, segments and captions it lists (see
+ * server/media/media-token.ts).
  */
 export async function GET(
   request: Request,
@@ -34,6 +39,10 @@ async function handleGET(
   request: Request,
   context: { params: Promise<{ parts?: string[] }> },
 ): Promise<Response> {
+  const denied = mediaTokenDenial(request);
+  if (denied) return denied;
+  const mediaToken = passOnMediaToken(request);
+
   const { parts } = await context.params;
   const [videoId, file] = parts ?? [];
   if (!videoId || !VIDEO_ID_RE.test(videoId) || !file) {
@@ -42,7 +51,7 @@ async function handleGET(
 
   try {
     if (file === "master.m3u8") {
-      const body = await generateMasterPlaylist(videoId);
+      const body = await generateMasterPlaylist(videoId, mediaToken);
       return new Response(body, {
         headers: {
           "content-type": M3U8_CONTENT_TYPE,
@@ -62,7 +71,12 @@ async function handleGET(
       if (xtags && !/^[\w.:=-]{1,200}$/.test(xtags)) {
         return new Response("invalid xtags", { status: 400 });
       }
-      const body = await generateMediaPlaylist(videoId, itag, xtags);
+      const body = await generateMediaPlaylist(
+        videoId,
+        itag,
+        xtags,
+        mediaToken,
+      );
       return new Response(body, {
         headers: {
           "content-type": M3U8_CONTENT_TYPE,
@@ -83,7 +97,11 @@ async function handleGET(
       if (!lang && !label) {
         return new Response("missing lang or label", { status: 400 });
       }
-      const body = await generateSubtitlePlaylist(videoId, { lang, label });
+      const body = await generateSubtitlePlaylist(
+        videoId,
+        { lang, label },
+        mediaToken,
+      );
       return new Response(body, {
         headers: {
           "content-type": M3U8_CONTENT_TYPE,
