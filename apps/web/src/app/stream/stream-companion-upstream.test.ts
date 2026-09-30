@@ -75,14 +75,8 @@ describe("videoplaybackUpstreamUrls", () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it("stays on the instance unless INVIDIOUS_STREAM_VIA_COMPANION is on", () => {
-    expect(
-      videoplaybackUpstreamUrls(INSTANCE, "videoplayback", SEARCH).map(String),
-    ).toEqual([`${INSTANCE}/videoplayback${SEARCH}`]);
-  });
-
-  it("puts the companion first, the instance second, when on", () => {
-    vi.stubEnv("INVIDIOUS_STREAM_VIA_COMPANION", "true");
+  it("puts the companion first, the instance second, by default", () => {
+    vi.stubEnv("INVIDIOUS_STREAM_VIA_COMPANION", undefined);
     expect(
       videoplaybackUpstreamUrls(INSTANCE, "videoplayback", SEARCH).map(String),
     ).toEqual([
@@ -91,8 +85,22 @@ describe("videoplaybackUpstreamUrls", () => {
     ]);
   });
 
+  it("stays on the instance when INVIDIOUS_STREAM_VIA_COMPANION=false", () => {
+    vi.stubEnv("INVIDIOUS_STREAM_VIA_COMPANION", "false");
+    expect(
+      videoplaybackUpstreamUrls(INSTANCE, "videoplayback", SEARCH).map(String),
+    ).toEqual([`${INSTANCE}/videoplayback${SEARCH}`]);
+  });
+
+  it("never falls back to the public companion path", () => {
+    vi.stubEnv("INVIDIOUS_COMPANION_INTERNAL_URL", undefined);
+    vi.stubEnv("INVIDIOUS_PUBLIC_BASE_URL", "https://invidious.example");
+    expect(
+      videoplaybackUpstreamUrls(INSTANCE, "videoplayback", SEARCH).map(String),
+    ).toEqual([`${INSTANCE}/videoplayback${SEARCH}`]);
+  });
+
   it("skips the companion without host= or clen=, and for other paths", () => {
-    vi.stubEnv("INVIDIOUS_STREAM_VIA_COMPANION", "true");
     expect(
       videoplaybackUpstreamUrls(
         INSTANCE,
@@ -117,7 +125,6 @@ describe("/stream videoplayback via the companion", () => {
   beforeEach(() => {
     vi.stubEnv("INVIDIOUS_BASE_URL", INSTANCE);
     vi.stubEnv("INVIDIOUS_COMPANION_INTERNAL_URL", COMPANION);
-    vi.stubEnv("INVIDIOUS_STREAM_VIA_COMPANION", "true");
   });
   afterEach(() => {
     vi.unstubAllGlobals();
