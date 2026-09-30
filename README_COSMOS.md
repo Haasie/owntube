@@ -72,8 +72,10 @@ seconden lopen en dan hangt hij weer. Loop dit in deze volgorde af:
 2. **HTTP/2 uit in Cosmos.** Cosmos is een Go-server en zet HTTP/2 automatisch
    aan. Safari's HTTP/2-verbinding loopt vast zodra een media-request wordt
    afgebroken (seek, hervatten, kwaliteitswissel): daarna komt er op die
-   verbinding niets meer binnen. Upstream OwnTube draait daarom zonder HTTP/2.
-   Zet op de **cosmos-server** container de env-var:
+   verbinding niets meer binnen, tot een nieuwe seek toevallig een nieuwe
+   verbinding opent. Precies het patroon uit de recording: hangen op het
+   hervat-punt, na scrubben een paar seconden spelen, weer hangen. Zet op de
+   **cosmos-server** container de env-var:
 
    ```
    GODEBUG=http2server=0
@@ -97,11 +99,12 @@ seconden lopen en dan hangt hij weer. Loop dit in deze volgorde af:
    player verbruikt dat budget snel: daarna blokkeert Cosmos je IP een uur
    (429 op alles, ook de pagina), na drie keer vier uur.
 
-4. **Streams via de companion** staat in `docker-compose.yml` aan
-   (`INVIDIOUS_STREAM_VIA_COMPANION=true`): OwnTube haalt video-bytes bij de
-   companion's `/companion/videoplayback`, het pad dat Invidious' eigen player
-   met een companion gebruikt, en valt per request terug op Invidious'
-   `/videoplayback` als de companion weigert. Terugdraaien:
+4. **Streams via de companion** staat standaard aan: OwnTube haalt video-bytes
+   bij de companion's `/companion/videoplayback` via
+   `INVIDIOUS_COMPANION_INTERNAL_URL` (het pad dat Invidious' eigen player met
+   een companion gebruikt), en valt per request terug op Invidious'
+   `/videoplayback` als de companion weigert. Nooit via
+   `invidious.haasie.nl`: daar staat Cosmos-auth voor. Uitzetten:
    `INVIDIOUS_STREAM_VIA_COMPANION=false` in `.env` en `docker compose up -d owntube`.
 
 ---

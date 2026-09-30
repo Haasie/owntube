@@ -15,7 +15,6 @@ import {
 } from "@/lib/invidious-proxy";
 import { normalizeUpstreamBaseUrl } from "@/lib/upstream-base-url";
 import { type AssetKind, getCachedAsset } from "@/server/assets/cache";
-import { companionInternalBase } from "@/server/services/companion";
 
 function invidiousUpstreamBase(): string {
   return normalizeUpstreamBaseUrl(process.env.INVIDIOUS_BASE_URL);
@@ -24,15 +23,18 @@ function invidiousUpstreamBase(): string {
 /**
  * Where a proxied `videoplayback` request is fetched from, preferred first.
  *
- * Default: the Invidious instance's own `/videoplayback`, a Crystal proxy
- * that re-requests googlevideo with a plain GET + Range header over IPv4.
- * With INVIDIOUS_STREAM_VIA_COMPANION=true the companion's
- * `/companion/videoplayback` comes first — the route Invidious's own player
- * sends every stream through once a companion is configured, and the one that
- * talks to googlevideo the way YouTube's web player does (HEAD, then a POST
- * with the byte range as a `range=` parameter and the minting client's user
- * agent). The instance stays second, so a request the companion refuses
- * (e.g. an expired URL) still gets an answer.
+ * The companion's `/companion/videoplayback` comes first: the route
+ * Invidious's own player sends every stream through once a companion is
+ * configured, and the one that talks to googlevideo the way YouTube's web
+ * player does (HEAD, then a POST with the byte range as a `range=` parameter
+ * and the minting client's user agent). The Invidious instance's own
+ * `/videoplayback` — a Crystal proxy that re-requests googlevideo with a plain
+ * GET + Range header over IPv4 — stays second, so a request the companion
+ * refuses (e.g. an expired URL) still gets an answer.
+ *
+ * Only over INVIDIOUS_COMPANION_INTERNAL_URL: the public companion path sits
+ * behind the reverse proxy, whose auth would answer with a login page rather
+ * than media. INVIDIOUS_STREAM_VIA_COMPANION=false keeps the instance only.
  */
 export function videoplaybackUpstreamUrls(
   inv: string,
@@ -40,9 +42,11 @@ export function videoplaybackUpstreamUrls(
   search: string,
 ): URL[] {
   const instance = new URL(subpath + search, `${inv}/`);
-  if (process.env.INVIDIOUS_STREAM_VIA_COMPANION !== "true") return [instance];
+  if (process.env.INVIDIOUS_STREAM_VIA_COMPANION === "false") return [instance];
   if (subpath !== "videoplayback") return [instance];
-  const companion = companionInternalBase();
+  const companion = normalizeUpstreamBaseUrl(
+    process.env.INVIDIOUS_COMPANION_INTERNAL_URL,
+  );
   if (!companion) return [instance];
   const params = new URLSearchParams(search);
   // The companion refuses a request that doesn't name the googlevideo host,
