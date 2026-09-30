@@ -13,6 +13,7 @@ import {
   getAppOriginFromRequestHeaders,
   rewriteM3u8AllProxies,
 } from "@/lib/invidious-proxy";
+import { withoutMediaToken } from "@/lib/media-token";
 import { normalizeUpstreamBaseUrl } from "@/lib/upstream-base-url";
 import { type AssetKind, getCachedAsset } from "@/server/assets/cache";
 
@@ -567,16 +568,30 @@ export function subpathFromProxyRequest(
   return subpath.length > 0 ? subpath : null;
 }
 
+/** The upstream path a proxy request is for (`videoplayback`, `vi/<id>/…`). */
+export function proxySubpath(
+  request: Request,
+  prefix: string,
+  segments: string[] = [],
+): string {
+  return (
+    subpathFromProxyRequest(request.url, prefix) ??
+    (segments.length > 0 ? segments.join("/") : "")
+  );
+}
+
 /**
  * Stream Invidious media (HLS, segments, poster) same-origin with the media
  * origin (see media-origin.ts) so the browser and hls.js are not blocked by
  * CORS. Playlists (m3u8) are text-rewritten so absolute segment URLs are also
- * on that origin.
+ * on that origin, carrying `mediaToken` when the caller has one (see
+ * server/media/media-token.ts); checking the request's own token is the
+ * mounting route's job.
  */
 
 export async function handleUpstreamMediaRequest(
   request: Request,
-  opts: { segments?: string[]; prefix: string },
+  opts: { segments?: string[]; prefix: string; mediaToken?: string | null },
 ) {
   const inv = invidiousUpstreamBase();
   if (!inv) {
@@ -585,11 +600,10 @@ export async function handleUpstreamMediaRequest(
     });
   }
 
-  const segs = opts.segments ?? [];
-  const subpathFromPath = segs.length > 0 ? segs.join("/") : null;
-  const subpath =
-    subpathFromProxyRequest(request.url, opts.prefix) ?? subpathFromPath ?? "";
-  const upstreamSearch = new URL(request.url).searchParams;
+  const subpath = proxySubpath(request, opts.prefix, opts.segments);
+  // The media token stops here: Invidious, the companion and googlevideo
+  // never see (or log) it. googlevideo's own `mt` goes through.
+  const upstreamSearch = withoutMediaToken(new URL(request.url).searchParams);
   // Ours, not the upstream's: see `cardThumbnail`.
   const cardWidth = cardThumbnailWidth(upstreamSearch.get("w"));
   upstreamSearch.delete("w");
@@ -698,6 +712,7 @@ export async function handleUpstreamMediaRequest(
       requestHost,
       inv,
       manifestUrl,
+      opts.mediaToken,
     );
     return new Response(out, {
       status: r.status,

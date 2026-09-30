@@ -17,6 +17,7 @@
  */
 
 import { isYoutubeFamilyHostname } from "@/lib/invidious-proxy";
+import { withMediaToken } from "@/lib/media-token";
 
 const INVIDIOUS_TIMEOUT_MS = 15_000;
 
@@ -87,18 +88,20 @@ export function companionDirectSegmentUri(url: string): string | null {
 
 /**
  * Segment/init URI for a media playlist. Default: rewrite the absolute upstream
- * stream URL to OwnTube's same-origin `/stream/…` proxy path. With
+ * stream URL to OwnTube's same-origin `/stream/…` proxy path, carrying
+ * `mediaToken` (see server/media/media-token.ts). With
  * INVIDIOUS_DIRECT_HLS_SEGMENTS=true: point at Invidious/companion directly
- * (CORS `*`) so segments skip our Node proxy — never at googlevideo.
+ * (CORS `*`) so segments skip our Node proxy — never at googlevideo, and
+ * without the token, which is only for our own routes.
  */
-export function segmentUri(url: string): string {
+export function segmentUri(url: string, mediaToken?: string | null): string {
   if (process.env.INVIDIOUS_DIRECT_HLS_SEGMENTS === "true") {
     const direct = companionDirectSegmentUri(url);
     if (direct) return direct;
   }
   try {
     const u = new URL(url);
-    return `/stream${u.pathname}${u.search}`;
+    return withMediaToken(`/stream${u.pathname}${u.search}`, mediaToken);
   } catch {
     return url;
   }
@@ -422,9 +425,12 @@ export function audioTrackName(t: AudioTrackVariant, index: number): string {
   return t.isOriginal && t.lang ? `${name} (Original)` : name;
 }
 
-function mediaPlaylistUri(t: AudioTrackVariant): string {
+function mediaPlaylistUri(
+  t: AudioTrackVariant,
+  mediaToken?: string | null,
+): string {
   const xt = t.xtags ? `&xtags=${encodeURIComponent(t.xtags)}` : "";
-  return `media.m3u8?itag=${t.format.itag}${xt}`;
+  return withMediaToken(`media.m3u8?itag=${t.format.itag}${xt}`, mediaToken);
 }
 
 /**
@@ -450,24 +456,33 @@ function hlsAttributeText(value: string): string {
  * start off unless the viewer — or the system's closed-captions setting,
  * which honours AUTOSELECT — asks for them.
  */
-function subtitleRenditions(captions: InvidiousCaption[]): string[] {
+function subtitleRenditions(
+  captions: InvidiousCaption[],
+  mediaToken?: string | null,
+): string[] {
   return captions.flatMap((caption) => {
     const query = captionQuery(caption);
     if (!query) return [];
     const lang = (caption.language_code ?? caption.languageCode)?.trim();
     const name = hlsAttributeText(caption.label?.trim() || lang || "Captions");
     const language = lang ? `,LANGUAGE="${hlsAttributeText(lang)}"` : "";
+    const uri = withMediaToken(`subtitles.m3u8?${query}`, mediaToken);
     return [
-      `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="${name}"${language},DEFAULT=NO,AUTOSELECT=YES,URI="subtitles.m3u8?${query}"`,
+      `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="${name}"${language},DEFAULT=NO,AUTOSELECT=YES,URI="${uri}"`,
     ];
   });
 }
 
-/** Pure master-playlist builder (exported for tests). */
+/**
+ * Pure master-playlist builder (exported for tests). `mediaToken` goes on
+ * every child playlist URI: AVPlayer resolves them against the master's URL
+ * but doesn't carry its query over.
+ */
 export function buildMasterPlaylist(
   videos: AdaptiveFormat[],
   audioTracks: AudioTrackVariant[],
   captions: InvidiousCaption[] = [],
+  mediaToken?: string | null,
 ): string {
   const defaultAudio =
     audioTracks.find((t) => t.isDefault) ??
@@ -485,10 +500,10 @@ export function buildMasterPlaylist(
     // AUTOSELECT=YES on the DEFAULT=YES rendition).
     const flag = t.isDefault ? "YES" : "NO";
     lines.push(
-      `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="${name}"${language},DEFAULT=${flag},AUTOSELECT=${flag},URI="${mediaPlaylistUri(t)}"`,
+      `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="${name}"${language},DEFAULT=${flag},AUTOSELECT=${flag},URI="${mediaPlaylistUri(t, mediaToken)}"`,
     );
   }
-  const subtitles = subtitleRenditions(captions);
+  const subtitles = subtitleRenditions(captions, mediaToken);
   lines.push(...subtitles);
   const subtitlesGroup = subtitles.length > 0 ? `,SUBTITLES="subs"` : "";
   for (const v of videos) {
@@ -498,13 +513,16 @@ export function buildMasterPlaylist(
     lines.push(
       `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth}${res},CODECS="${codecs}",AUDIO="aud"${subtitlesGroup}`,
     );
-    lines.push(`media.m3u8?itag=${v.itag}`);
+    lines.push(withMediaToken(`media.m3u8?itag=${v.itag}`, mediaToken));
   }
   return `${lines.join("\n")}\n`;
 }
 
 /** Master playlist: video variants + one audio rendition per language. */
-export async function generateMasterPlaylist(videoId: string): Promise<string> {
+export async function generateMasterPlaylist(
+  videoId: string,
+  mediaToken?: string | null,
+): Promise<string> {
   const af = await fetchAdaptiveFormats(videoId);
   const videos = pickVideoFormats(af);
   const audioTracks = pickAudioTracks(af);
@@ -518,7 +536,7 @@ export async function generateMasterPlaylist(videoId: string): Promise<string> {
     durationSecondsFromFormats(af) > 0
       ? await fetchVideoCaptions(videoId).catch(() => [] as InvidiousCaption[])
       : [];
-  return buildMasterPlaylist(videos, audioTracks, captions);
+  return buildMasterPlaylist(videos, audioTracks, captions, mediaToken);
 }
 
 /**
@@ -531,6 +549,7 @@ export function buildSubtitlePlaylist(
   videoId: string,
   query: string,
   durationSeconds: number,
+  mediaToken?: string | null,
 ): string {
   const duration = durationSeconds.toFixed(3);
   return `${[
@@ -540,7 +559,10 @@ export function buildSubtitlePlaylist(
     "#EXT-X-MEDIA-SEQUENCE:0",
     "#EXT-X-PLAYLIST-TYPE:VOD",
     `#EXTINF:${duration},`,
-    `/captions/${encodeURIComponent(videoId)}?${query}`,
+    withMediaToken(
+      `/captions/${encodeURIComponent(videoId)}?${query}`,
+      mediaToken,
+    ),
     "#EXT-X-ENDLIST",
   ].join("\n")}\n`;
 }
@@ -549,6 +571,7 @@ export function buildSubtitlePlaylist(
 export async function generateSubtitlePlaylist(
   videoId: string,
   caption: { lang?: string; label?: string },
+  mediaToken?: string | null,
 ): Promise<string> {
   const query = captionQuery({
     languageCode: caption.lang,
@@ -559,7 +582,7 @@ export async function generateSubtitlePlaylist(
     await fetchAdaptiveFormats(videoId),
   );
   if (durationSeconds <= 0) throw new Error("unknown video duration");
-  return buildSubtitlePlaylist(videoId, query, durationSeconds);
+  return buildSubtitlePlaylist(videoId, query, durationSeconds, mediaToken);
 }
 
 /** Parsed `sidx` per (videoId, itag); dedupes the byte-range fetch across the
@@ -584,32 +607,16 @@ function getSidx(
 }
 
 /**
- * Media playlist for one stream (itag): EXT-X-MAP + byte-range fragments.
- *
- * `xtags` disambiguates multi-language audio: every language of a video's AAC
- * audio shares itag 140 and differs only in the URL's xtags, so an itag-only
- * lookup would always resolve to the first row (possibly a dub).
+ * Pure media-playlist builder (exported for tests): EXT-X-MAP + one
+ * byte-range fragment per `sidx` reference, all on the stream's segment URI.
  */
-export async function generateMediaPlaylist(
-  videoId: string,
-  itag: string,
-  xtags?: string | null,
-): Promise<string> {
-  const af = await fetchAdaptiveFormats(videoId);
-  const f = af.find(
-    (x) =>
-      String(x.itag) === String(itag) &&
-      (!xtags || audioXtagsOf(x.url).raw === xtags),
-  );
-  if (!f || !f.init || !f.index) throw new Error(`itag ${itag} not found`);
-  const sidx = await getSidx(
-    videoId,
-    xtags ? `${itag}:${xtags}` : itag,
-    f.url,
-    f.index,
-  );
-  const uri = segmentUri(f.url);
-  const [ia, ib] = f.init.split("-").map(Number);
+export function buildMediaPlaylist(
+  format: Pick<AdaptiveFormat, "url" | "init">,
+  sidx: Sidx,
+  mediaToken?: string | null,
+): string {
+  const uri = segmentUri(format.url, mediaToken);
+  const [ia, ib] = format.init.split("-").map(Number);
   const targetDuration = Math.ceil(
     sidx.refs.reduce((m, r) => Math.max(m, r.duration), 0),
   );
@@ -631,4 +638,33 @@ export async function generateMediaPlaylist(
   }
   lines.push("#EXT-X-ENDLIST");
   return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Media playlist for one stream (itag): EXT-X-MAP + byte-range fragments.
+ *
+ * `xtags` disambiguates multi-language audio: every language of a video's AAC
+ * audio shares itag 140 and differs only in the URL's xtags, so an itag-only
+ * lookup would always resolve to the first row (possibly a dub).
+ */
+export async function generateMediaPlaylist(
+  videoId: string,
+  itag: string,
+  xtags?: string | null,
+  mediaToken?: string | null,
+): Promise<string> {
+  const af = await fetchAdaptiveFormats(videoId);
+  const f = af.find(
+    (x) =>
+      String(x.itag) === String(itag) &&
+      (!xtags || audioXtagsOf(x.url).raw === xtags),
+  );
+  if (!f || !f.init || !f.index) throw new Error(`itag ${itag} not found`);
+  const sidx = await getSidx(
+    videoId,
+    xtags ? `${itag}:${xtags}` : itag,
+    f.url,
+    f.index,
+  );
+  return buildMediaPlaylist(f, sidx, mediaToken);
 }

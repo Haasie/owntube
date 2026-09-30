@@ -122,7 +122,6 @@ export function LiveBlock({
           : "aspect-video w-full",
       )}
     >
-      {/* biome-ignore lint/a11y/useMediaCaption: subtitle <track>s are provided dynamically from the `captions` prop (mapped children the rule can't statically see). */}
       <video
         key={reactKey}
         ref={videoRef}

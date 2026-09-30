@@ -11,7 +11,12 @@
 #      upstream: the Invidious instance's /videoplayback, the companion's
 #      /companion/videoplayback, and OwnTube's own /stream proxy (the URL the
 #      browser uses), at 0 / 30 / 60 / 90 % into the file
-#   3. the last 30 minutes of media errors from the owntube log
+#   3. the HLS playlist, first video playlist and init segment fetched the way
+#      the iPhone's player (AVPlayer) fetches them: through the reverse proxy,
+#      without the login cookie (but with a media token when
+#      MEDIA_TOKEN_REQUIRED=true, as the page would hand it)
+#   4. from the last 30 minutes of the owntube log: which of the iPhone
+#      player's requests reached OwnTube, plus media errors and player reports
 set -eu
 
 VIDEO_ID=${1:-aqz-KE-bpKQ}
@@ -40,6 +45,17 @@ const OFFSETS = [0, 0.3, 0.6, 0.9];
 console.log(
   `   INVIDIOUS_STREAM_VIA_COMPANION=${process.env.INVIDIOUS_STREAM_VIA_COMPANION ?? "(unset)"}`,
 );
+console.log(
+  `   MEDIA_TOKEN_REQUIRED=${process.env.MEDIA_TOKEN_REQUIRED ?? "(unset)"}`,
+);
+
+// OwnTube's own /stream and /hls want a media token when MEDIA_TOKEN_REQUIRED
+// is on; take one the way a long-open page does.
+const mt = await fetch(`${self}/api/media-token`)
+  .then((r) => r.json())
+  .then((j) => j.token ?? "")
+  .catch(() => "");
+const withMt = (url) => (mt ? `${url}${url.includes("?") ? "&" : "?"}mt=${mt}` : url);
 
 async function timed(url, range, timeoutMs = 20_000) {
   const t0 = performance.now();
@@ -98,7 +114,7 @@ for (const [kind, f] of picks) {
   const hops = [
     ["instance ", `${inv}${u.pathname}${u.search}`],
     ...(companion ? [["companion", `${companion}/companion/videoplayback${u.search}`]] : []),
-    ["owntube  ", `${self}/stream${u.pathname}${u.search}`],
+    ["owntube  ", withMt(`${self}/stream${u.pathname}${u.search}`)],
   ];
   for (const offset of OFFSETS) {
     const start = Math.floor(clen * offset);
@@ -124,7 +140,7 @@ for (const [kind, f] of picks) {
 }
 
 for (const path of [`/hls/${id}/master.m3u8`]) {
-  const r = await timed(`${self}${path}`);
+  const r = await timed(withMt(`${self}${path}`));
   console.log(`\n   ${path}: ${r.error ?? r.status} in ${Math.round(r.ms)} ms`);
 }
 
@@ -140,8 +156,71 @@ if (verdicts.size === 0) {
 NODE
 
 echo
-echo "== 3. Media errors in the owntube log (last 30 min)"
-docker logs --since 30m "$CONTAINER" 2>&1 |
-  grep -E '\[MEDIA\].* -> [45][0-9][0-9]|trying the next upstream|\[CLIENT-LOG\]' |
-  tail -40 || true
-echo "   (no lines: set OWNTUBE_MEDIA_DEBUG=1 on owntube, reproduce on the phone, run again)"
+echo "== 3. What the iPhone's player gets from $APP_URL without cookies"
+# iOS plays HLS through AVPlayer, which fetches the playlists and segments
+# itself and does not send the page's login cookie. Ask exactly what it asks.
+PUB="$APP_URL/hls/$VIDEO_ID"
+body=$(mktemp)
+trap 'rm -f "$body"' EXIT
+# With MEDIA_TOKEN_REQUIRED=true the page hands the player a media token (mt=)
+# that every URL after the master carries on its own; take one from OwnTube.
+MT=$(docker exec "$CONTAINER" node -e 'fetch(`http://127.0.0.1:${process.env.PORT || 3000}/api/media-token`).then((r) => r.json()).then((j) => process.stdout.write(j.token || "")).catch(() => {})' 2>/dev/null || true)
+QS=""
+if [ -n "$MT" ]; then
+  res=$(curl -sS -o /dev/null --max-time 20 -w '%{http_code}' "$PUB/master.m3u8" 2>&1) || res="failed: $res"
+  echo "   master.m3u8 without mt= -> $res (403: OwnTube refuses URLs it didn't hand out, as it should)"
+  QS="?mt=$MT"
+fi
+res=$(curl -sS -o "$body" --max-time 20 -w '%{http_code} %{content_type} %{redirect_url}' "$PUB/master.m3u8$QS" 2>&1) ||
+  res="failed: $res"
+echo "   master.m3u8        -> $res"
+if head -c 7 "$body" | grep -q '#EXTM3U'; then
+  media=$(grep -m1 '^media\.m3u8' "$body" || true)
+  if [ -n "$media" ]; then
+    res=$(curl -sS -o "$body" --max-time 30 -w '%{http_code} %{content_type}' "$PUB/$media" 2>&1) || res="failed: $res"
+    echo "   $media -> $res"
+    map=$(sed -n 's/^#EXT-X-MAP:URI="\([^"]*\)",BYTERANGE="\([0-9]*\)@\([0-9]*\)".*/\1 \2 \3/p' "$body" | head -1)
+    if [ -n "$map" ]; then
+      # shellcheck disable=SC2086 # three space-separated fields, none with spaces
+      set -- $map
+      case $1 in /*) seg="$APP_URL$1" ;; http*) seg=$1 ;; *) seg="$PUB/$1" ;; esac
+      range="bytes=$3-$(($3 + $2 - 1))"
+      res=$(curl -sS -o /dev/null --max-time 30 -H "Range: $range" \
+        -w '%{http_code} %{content_type} %{size_download} bytes' "$seg" 2>&1) || res="failed: $res"
+      echo "   init segment ($range) -> $res"
+    fi
+  fi
+  echo "   => the playlist reaches the player without cookies; if native HLS still fails,"
+  echo "      the lines above and section 4 show which request it didn't like"
+elif grep -q 'media token' "$body"; then
+  echo "   => OwnTube refused the media token (MEDIA_TOKEN_REQUIRED=true): no valid one could be"
+  echo "      taken from $CONTAINER. Is AUTH_SECRET set on it?"
+else
+  snippet=$(head -c 80 "$body" | tr -s '\n\r\t' ' ')
+  echo "   => NOT a playlist: ${snippet:-the answer above}"
+  echo "      That is the native-HLS failure on the iPhone (MEDIA_ERR_SRC_NOT_SUPPORTED): the"
+  echo "      reverse proxy's login stands between AVPlayer and OwnTube. README_COSMOS.md, step 5."
+fi
+
+echo
+echo "== 4. The owntube log, last 30 min"
+logs=$(docker logs --since 30m "$CONTAINER" 2>&1 || true)
+if ! printf '%s\n' "$logs" | grep -q '\[MEDIA\]'; then
+  echo "   no [MEDIA] lines at all: set OWNTUBE_MEDIA_DEBUG=1 on owntube, try the video on the"
+  echo "   phone, run this again"
+else
+  apple=$(printf '%s\n' "$logs" | grep '\[MEDIA\]' | grep 'AppleCoreMedia' || true)
+  if [ -z "$apple" ]; then
+    echo "   none of the iPhone player's requests (user agent AppleCoreMedia) reached OwnTube:"
+    echo "   they were stopped in front of it (see section 3). Tried the video on the phone first?"
+  else
+    echo "   the iPhone player's requests (AppleCoreMedia), newest last:"
+    printf '%s\n' "$apple" | tail -20 | sed 's/^/     /'
+  fi
+fi
+errors=$(printf '%s\n' "$logs" |
+  grep -E '\[MEDIA\].* -> [45][0-9][0-9]|trying the next upstream|\[CLIENT-LOG\]' | tail -20 || true)
+if [ -n "$errors" ]; then
+  echo "   media errors and player reports:"
+  printf '%s\n' "$errors" | sed 's/^/     /'
+fi

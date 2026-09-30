@@ -13,9 +13,11 @@
  * One video AdaptationSet per manifest, codec family chosen by the client via
  * `?video=` (probed with `MediaSource.isTypeSupported`), so ABR always climbs
  * a single consistent ladder. Audio is the default AAC track. Segments ride
- * the same same-origin `/invidious/videoplayback` proxy as the HLS path.
+ * the same same-origin `/stream/videoplayback` proxy as the HLS path, and
+ * carry the same media token (see server/media/media-token.ts).
  */
 
+import { withMediaToken } from "@/lib/media-token";
 import {
   type AdaptiveFormat,
   type AudioTrackVariant,
@@ -152,20 +154,25 @@ const SPLIT_DIRECT_MAX_KBPS = 2500;
  * - "false": everything through the same-origin proxy (e.g. when the
  *   companion host is not reachable from the browser).
  */
-function dashSegmentUri(url: string, seekCritical: boolean): string {
+function dashSegmentUri(
+  url: string,
+  seekCritical: boolean,
+  mediaToken?: string | null,
+): string {
   const mode = process.env.INVIDIOUS_DIRECT_DASH_SEGMENTS ?? "split";
   const wantDirect = mode === "true" || (mode !== "false" && seekCritical);
   if (wantDirect) {
     const direct = companionDirectSegmentUri(url);
     if (direct) return direct;
   }
-  return segmentUri(url);
+  return segmentUri(url, mediaToken);
 }
 
 function representationXml(
   f: AdaptiveFormat,
   indent: string,
   idOverride?: string,
+  mediaToken?: string | null,
 ): string {
   const [w, h] = (f.size ?? "").split("x").map((n) => Number.parseInt(n, 10));
   const dims =
@@ -179,7 +186,7 @@ function representationXml(
     f.type.startsWith("audio/") || bandwidth <= SPLIT_DIRECT_MAX_KBPS * 1000;
   return [
     `${indent}<Representation id="${xmlEscape(idOverride ?? String(f.itag))}" codecs="${xmlEscape(codecsOf(f.type))}" bandwidth="${bandwidth}"${dims}${fps}>`,
-    `${indent}  <BaseURL>${xmlEscape(dashSegmentUri(f.url, seekCritical))}</BaseURL>`,
+    `${indent}  <BaseURL>${xmlEscape(dashSegmentUri(f.url, seekCritical, mediaToken))}</BaseURL>`,
     `${indent}  <SegmentBase indexRange="${xmlEscape(f.index)}">`,
     `${indent}    <Initialization range="${xmlEscape(f.init)}"/>`,
     `${indent}  </SegmentBase>`,
@@ -198,7 +205,10 @@ function representationXml(
  * captions below), and Representation ids get an `a<n>-` prefix because
  * every language shares the same itag.
  */
-function audioAdaptationSets(tracks: AudioTrackVariant[]): string[] {
+function audioAdaptationSets(
+  tracks: AudioTrackVariant[],
+  mediaToken?: string | null,
+): string[] {
   const multi = tracks.length > 1;
   return tracks.flatMap((t, i) => {
     const f = t.format;
@@ -214,7 +224,12 @@ function audioAdaptationSets(tracks: AudioTrackVariant[]): string[] {
     return [
       `    <AdaptationSet id="${1 + i}" mimeType="${xmlEscape(mime)}"${lang}${priority} startWithSAP="1" subsegmentAlignment="true">`,
       ...inner,
-      representationXml(f, "      ", multi ? `a${i}-${f.itag}` : undefined),
+      representationXml(
+        f,
+        "      ",
+        multi ? `a${i}-${f.itag}` : undefined,
+        mediaToken,
+      ),
       `    </AdaptationSet>`,
     ];
   });
@@ -233,6 +248,7 @@ function captionAdaptationSets(
   videoId: string,
   captions: InvidiousCaption[],
   firstId: number,
+  mediaToken?: string | null,
 ): string[] {
   return captions.flatMap((caption, i) => {
     const lang = (caption.language_code ?? caption.languageCode)?.trim();
@@ -243,6 +259,10 @@ function captionAdaptationSets(
       ? `lang=${encodeURIComponent(lang)}`
       : `label=${encodeURIComponent(label as string)}`;
     const id = firstId + i;
+    const url = withMediaToken(
+      `/captions/${encodeURIComponent(videoId)}?${query}`,
+      mediaToken,
+    );
     // lang is mandatory in practice: expo-video drops any subtitle track whose
     // Format has no language, so an omitted attribute makes the track invisible
     // to the app. "und" (undetermined) keeps it selectable when upstream gives
@@ -253,7 +273,7 @@ function captionAdaptationSets(
       )}">`,
       `      <Role schemeIdUri="urn:mpeg:dash:role:2011" value="subtitle"/>`,
       `      <Representation id="cap-${id}" bandwidth="256">`,
-      `        <BaseURL>${xmlEscape(`/captions/${encodeURIComponent(videoId)}?${query}`)}</BaseURL>`,
+      `        <BaseURL>${xmlEscape(url)}</BaseURL>`,
       `      </Representation>`,
       `    </AdaptationSet>`,
     ];
@@ -268,11 +288,14 @@ function captionAdaptationSets(
 export async function vodCaptionAdaptationSets(
   videoId: string,
   firstId: number,
+  mediaToken?: string | null,
 ): Promise<string> {
   const captions = await fetchVideoCaptions(videoId).catch(
     () => [] as InvidiousCaption[],
   );
-  return captionAdaptationSets(videoId, captions, firstId).join("\n");
+  return captionAdaptationSets(videoId, captions, firstId, mediaToken).join(
+    "\n",
+  );
 }
 
 /** Pure MPD builder (exported for tests). */
@@ -282,6 +305,7 @@ export function buildMpd(
   durationSeconds: number,
   videoId?: string,
   captions: InvidiousCaption[] = [],
+  mediaToken?: string | null,
 ): string {
   const videoMime = videos[0]?.type.split(";")[0]?.trim() ?? "video/mp4";
   const dur = durationSeconds > 0 ? durationSeconds.toFixed(3) : "0";
@@ -290,11 +314,16 @@ export function buildMpd(
     `<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011,urn:webm:dash:profile:webm-on-demand:2012" type="static" mediaPresentationDuration="PT${dur}S" minBufferTime="PT2S">`,
     `  <Period>`,
     `    <AdaptationSet id="0" mimeType="${xmlEscape(videoMime)}" startWithSAP="1" subsegmentAlignment="true" scanType="progressive">`,
-    ...videos.map((f) => representationXml(f, "      ")),
+    ...videos.map((f) => representationXml(f, "      ", undefined, mediaToken)),
     `    </AdaptationSet>`,
-    ...audioAdaptationSets(audioTracks),
+    ...audioAdaptationSets(audioTracks, mediaToken),
     ...(videoId
-      ? captionAdaptationSets(videoId, captions, 1 + audioTracks.length)
+      ? captionAdaptationSets(
+          videoId,
+          captions,
+          1 + audioTracks.length,
+          mediaToken,
+        )
       : []),
     `  </Period>`,
     `</MPD>`,
@@ -315,6 +344,7 @@ export async function generateMpd(
   family: DashVideoFamily,
   audioLang?: string | null,
   maxHeight?: number | null,
+  mediaToken?: string | null,
 ): Promise<string> {
   const af = await fetchAdaptiveFormats(videoId);
   let videos = pickDashVideoFormats(af, family);
@@ -348,5 +378,6 @@ export async function generateMpd(
     durationSecondsFromFormats(af),
     videoId,
     captions,
+    mediaToken,
   );
 }

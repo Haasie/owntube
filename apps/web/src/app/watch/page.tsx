@@ -30,6 +30,7 @@ import {
   toProxiedOrDirectVariants,
 } from "@/lib/invidious-proxy";
 import { getMediaOrigin } from "@/lib/media-origin";
+import { withMediaToken } from "@/lib/media-token";
 import { buildWatchPlayback } from "@/lib/pick-playback";
 import { scrubPreviewStreamFromDetail } from "@/lib/scrub-preview-stream";
 import { sponsorBlockPrefsFromAppSettings } from "@/lib/sponsorblock-prefs";
@@ -49,6 +50,7 @@ import {
   getWatchResumeSeconds,
   isVideoWatched,
 } from "@/server/history/watch-resume";
+import { issueMediaToken } from "@/server/media/media-token";
 import { getRecommendations } from "@/server/recommendation/engine";
 import { fetchAdaptiveFormats } from "@/server/services/hls/generate";
 import {
@@ -124,6 +126,10 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
   // Video/manifest/caption URLs are built against this instead of appOrigin —
   // see media-origin.ts for why (Safari HTTP/2 connection-loss bug).
   const mediaOrigin = getMediaOrigin(appOrigin);
+  // Every `/hls`, `/stream` and `/captions` URL below carries this, so those
+  // routes can stay outside the reverse proxy's login without serving
+  // strangers (null unless MEDIA_TOKEN_REQUIRED=true; see media-token.ts).
+  const mediaToken = issueMediaToken();
   const isAuthed = Boolean(session?.user?.id);
   const userSettings =
     Number.isFinite(userId) && userId > 0 ? getUserSettings(db, userId) : null;
@@ -238,6 +244,7 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
               rawPlayback.url,
               mediaOrigin,
               requestHost,
+              mediaToken,
             ),
             dvr: detail.isPostLiveDvr === true,
           }
@@ -248,6 +255,7 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
                 rawPlayback.variants,
                 mediaOrigin,
                 requestHost,
+                mediaToken,
               ),
             }
           : null
@@ -268,9 +276,12 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
         label: c.label,
         languageCode: c.languageCode,
         isDefault: i === defaultCaptionIndex,
-        src: `${mediaOrigin}/captions/${encodeURIComponent(detail.videoId)}?label=${encodeURIComponent(
-          c.label,
-        )}`,
+        src: withMediaToken(
+          `${mediaOrigin}/captions/${encodeURIComponent(detail.videoId)}?label=${encodeURIComponent(
+            c.label,
+          )}`,
+          mediaToken,
+        ),
       }))
     : undefined;
   const poster =
@@ -291,8 +302,12 @@ export default async function WatchPage({ searchParams }: WatchPageProps) {
   );
   const scrubPreviewStreamSrc =
     detail && !isLive && !detail.isPostLiveDvr
-      ? (scrubPreviewStreamFromDetail(detail, mediaOrigin, requestHost) ??
-        undefined)
+      ? (scrubPreviewStreamFromDetail(
+          detail,
+          mediaOrigin,
+          requestHost,
+          mediaToken,
+        ) ?? undefined)
       : undefined;
   const pageTitle =
     detail?.title ??

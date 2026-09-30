@@ -2,7 +2,12 @@ import {
   hostnameFromRequestHostHeader,
   rewriteStreamUrlForRequestHost,
 } from "@/lib/invidious-playback-url";
-import { toMediaOriginUrl } from "@/lib/media-origin";
+import { getMediaOrigin, toMediaOriginUrl } from "@/lib/media-origin";
+import {
+  pageMediaToken,
+  withMediaToken,
+  withMediaTokenIfGated,
+} from "@/lib/media-token";
 import type { PlayableVariant } from "@/lib/pick-playback";
 
 function invidiousBaseUrl(): string {
@@ -18,10 +23,14 @@ export function isInvidiousProxyAvailable(): boolean {
  * requests to the upstream port often fail (no CORS). We route everything
  * through OwnTube's same-origin `/stream/...` proxy. Folder must not start with
  * `_` — Next.js treats `_name` as a private (non-routed) segment.
+ *
+ * `mediaToken` (see lib/media-token.ts) defaults to the one this page was
+ * handed, which is none on the server: server callers pass their own.
  */
 export function toStreamProxyUrl(
   absoluteUrl: string,
   appOrigin: string,
+  mediaToken: string | null = pageMediaToken(),
 ): string {
   const u = new URL(absoluteUrl);
   // A raw googlevideo URL loses its hostname here, so carry it as `host=`: the
@@ -38,10 +47,10 @@ export function toStreamProxyUrl(
     const host = `host=${encodeURIComponent(u.hostname)}`;
     search = search ? `${search}&${host}` : `?${host}`;
   }
-  return new URL(
-    `/stream${u.pathname}${search}${u.hash}`,
-    appOrigin,
-  ).toString();
+  return withMediaToken(
+    new URL(`/stream${u.pathname}${search}${u.hash}`, appOrigin).toString(),
+    mediaToken,
+  );
 }
 
 export function getAppOriginFromRequestHeaders(
@@ -370,7 +379,38 @@ export function rewriteInvidiousVideoplaybackLinesToYtHls(
   return out.join("\n");
 }
 
-/** Invidious base rewrite plus YouTube/googlevideo hop (for hls.js). */
+/**
+ * Put `mediaToken` on every reference in an m3u8 that lands on one of our
+ * gated media routes (lib/media-token.ts): URI="…" attributes and URL lines.
+ * Relative references resolve the way the player resolves them, against a
+ * playlist this server handed out from `/stream/`.
+ */
+export function withMediaTokenInM3u8(
+  body: string,
+  appOrigin: string,
+  mediaToken: string | null | undefined,
+): string {
+  if (!mediaToken) return body;
+  const base = `${appOrigin}/stream/`;
+  const tag = (ref: string) =>
+    withMediaTokenIfGated(ref, mediaToken, appOrigin, base);
+  return body
+    .split(/\r?\n/)
+    .map((line) => {
+      const next = line.replace(
+        /URI="([^"]+)"/gi,
+        (_match, uri: string) => `URI="${tag(uri)}"`,
+      );
+      const trimmed = next.trim();
+      return trimmed && !trimmed.startsWith("#") ? tag(trimmed) : next;
+    })
+    .join("\n");
+}
+
+/**
+ * Invidious base rewrite plus YouTube/googlevideo hop (for hls.js), then
+ * `mediaToken` on every `/stream` reference the result holds.
+ */
 export function rewriteM3u8AllProxies(
   body: string,
   appOrigin: string,
@@ -378,6 +418,7 @@ export function rewriteM3u8AllProxies(
   invidiousBase?: string,
   /** Upstream manifest URL (required to resolve relative segment paths). */
   manifestUrl?: string,
+  mediaToken?: string | null,
 ): string {
   const inv = (invidiousBase ?? invidiousBaseUrl()).trim();
   let t = rewriteM3u8ForOwnTubeProxy(body, appOrigin, requestHost, inv);
@@ -386,7 +427,7 @@ export function rewriteM3u8AllProxies(
   }
   t = rewriteInvidiousVideoplaybackLinesToYtHls(t, appOrigin);
   t = rewriteYouTubeUrlsInM3u8(t, appOrigin);
-  return t;
+  return withMediaTokenInM3u8(t, appOrigin, mediaToken);
 }
 
 export function toYouTubeHopProxyUrl(
@@ -429,15 +470,21 @@ export function withInvidiousLocalHlsParam(mediaUrl: string): string {
   }
 }
 
+/**
+ * Browser-facing URL for a playback source. Our own media routes get
+ * `mediaToken` (see toStreamProxyUrl for the default); anything else,
+ * including the `/yt-hls` hop, which stays behind the login, goes without.
+ */
 export function toProxiedOrDirectPlayback(
   rawPlayback: string,
   appOrigin: string,
   requestHost: string,
+  mediaToken: string | null = pageMediaToken(),
 ): string {
   if (!rawPlayback) return rawPlayback;
   const playback = rawPlayback;
   if (shouldUseInvidiousProxyForUrl(playback)) {
-    return toStreamProxyUrl(playback, appOrigin);
+    return toStreamProxyUrl(playback, appOrigin, mediaToken);
   }
   if (shouldUseYouTubeHopProxyForUrl(rawPlayback)) {
     return toYouTubeHopProxyUrl(rawPlayback, appOrigin);
@@ -449,9 +496,14 @@ export function toProxiedOrDirectPlayback(
   const rewritten = requestHost
     ? rewriteStreamUrlForRequestHost(rawPlayback, requestHost)
     : rawPlayback;
-  return toMediaOriginUrl(rewritten, appOrigin);
+  return withMediaTokenIfGated(
+    toMediaOriginUrl(rewritten, appOrigin),
+    mediaToken,
+    getMediaOrigin(appOrigin),
+  );
 }
 
+/** Posters are images, which stay open (see app/stream route): no token. */
 export function toProxiedOrDirectPoster(
   rawPoster: string | undefined,
   appOrigin: string,
@@ -459,7 +511,7 @@ export function toProxiedOrDirectPoster(
 ): string | undefined {
   if (!rawPoster) return undefined;
   if (shouldUseInvidiousProxyForUrl(rawPoster)) {
-    return toStreamProxyUrl(rawPoster, appOrigin);
+    return toStreamProxyUrl(rawPoster, appOrigin, null);
   }
   const rewritten = requestHost
     ? rewriteStreamUrlForRequestHost(rawPoster, requestHost)
@@ -483,18 +535,21 @@ export function toProxiedOrDirectVariants(
   variants: PlayableVariant[],
   appOrigin: string,
   requestHost: string,
+  mediaToken: string | null = pageMediaToken(),
 ): ProxiedPlayableVariant[] {
+  const proxied = (url: string) =>
+    toProxiedOrDirectPlayback(url, appOrigin, requestHost, mediaToken);
   return variants.map((v) => {
     if (v.t === "split") {
       const audioTracks = v.audioOptions.map((o) => ({
         label: o.label,
-        src: toProxiedOrDirectPlayback(o.url, appOrigin, requestHost),
+        src: proxied(o.url),
       }));
       return {
         t: "split",
         label: v.label,
-        video: toProxiedOrDirectPlayback(v.videoUrl, appOrigin, requestHost),
-        audio: toProxiedOrDirectPlayback(v.audioUrl, appOrigin, requestHost),
+        video: proxied(v.videoUrl),
+        audio: proxied(v.audioUrl),
         audioTracks,
         defaultAudioIndex: v.defaultAudioIndex ?? 0,
       };
@@ -502,7 +557,7 @@ export function toProxiedOrDirectVariants(
     return {
       t: "muxed",
       label: v.label,
-      src: toProxiedOrDirectPlayback(v.url, appOrigin, requestHost),
+      src: proxied(v.url),
     };
   });
 }

@@ -8,11 +8,14 @@ import { UserNav } from "@/components/auth/user-nav";
 import { SwRegister } from "@/components/pwa/sw-register";
 import { FaviconInitScript } from "@/components/settings/favicon-init-script";
 import { AppShell } from "@/components/shell/app-shell";
+import { MediaTokenRefresh } from "@/components/shell/media-token-refresh";
+import { MediaTokenScript } from "@/components/shell/media-token-script";
 import { MobileAccountMenu } from "@/components/shell/mobile-account-menu";
 import { UiScale } from "@/components/shell/ui-scale";
 import { collectInvidiousOrigins } from "@/lib/channel-avatar-proxy";
 import { FAVICON_VERSION } from "@/lib/favicon";
 import { auth } from "@/server/auth";
+import { issueMediaToken } from "@/server/media/media-token";
 import { createTRPCContext } from "@/server/trpc/context";
 import { appRouter } from "@/server/trpc/root";
 import "./globals.css";
@@ -90,6 +93,7 @@ export default async function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <FaviconInitScript />
+        <MediaTokenScript token={issueMediaToken()} />
       </head>
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}
@@ -100,6 +104,7 @@ export default async function RootLayout({
         >
           <UiScale />
           <SwRegister />
+          <MediaTokenRefresh />
           <AppShell
             isLoggedIn={isLoggedIn}
             topbarRight={<UserNav />}

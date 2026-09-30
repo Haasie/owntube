@@ -9,11 +9,14 @@ export function scrubPreviewStreamFromDetail(
   detail: VideoDetail,
   appOrigin: string,
   requestHost: string,
+  /** See toStreamProxyUrl; server callers pass the token they minted. */
+  mediaToken?: string | null,
 ): string | null {
   const playback: CardPreviewPlayback | null = cardPreviewPlaybackFromDetail(
     detail,
     appOrigin,
     requestHost,
+    mediaToken,
   );
   if (!playback) return null;
   if (playback.kind === "muxed" || playback.kind === "hls") return playback.src;
