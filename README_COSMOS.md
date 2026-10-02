@@ -145,6 +145,42 @@ seconden lopen en dan hangt hij weer. Loop dit in deze volgorde af:
 
 ---
 
+## 🔄 Automatische updates
+
+Elke push naar `main` draait `.github/workflows/deploy.yml`:
+
+1. `pnpm lint` en `pnpm test`. Faalt er iets, dan stopt het hier en blijft
+   de server op de vorige versie.
+2. Bouwt `apps/web/Dockerfile` en pusht `ghcr.io/haasie/owntube:latest`
+   (plus een `sha-<commit>`-tag).
+3. Roept de Cosmos-webhook aan, zodat Cosmos de nieuwe image meteen ophaalt.
+
+`owntube` en `owntube-cache-warmer` dragen het label `cosmos-auto-update=true`
+en `pull_policy: always`. Zonder webhook pakt Cosmos de nieuwe image dus nog
+steeds op, maar pas bij zijn eigen periodieke check (dat kan uren duren).
+
+**Eenmalig, voor direct uitrollen:** open in Cosmos de ServApp `owntube` →
+**Settings**, kopieer de **Webhook URL** en zet hem als repo-secret:
+
+```bash
+gh secret set COSMOS_WEBHOOK_URL --repo Haasie/owntube
+```
+
+(`gh` vraagt dan om de waarde; plak de URL.) Zonder secret geeft de workflow
+een waarschuwing in plaats van stil over te slaan.
+
+**Controleren wat er live draait:**
+
+```bash
+docker inspect owntube --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+```
+
+Dat moet gelijk zijn aan de laatste commit op `main`. Handmatig forceren:
+`./update.sh -f` (haalt de image op en maakt de containers opnieuw aan; er
+wordt op de server niets meer gebouwd).
+
+---
+
 ## ⚙️ Beheer & Handige Commando's
 
 ```bash
