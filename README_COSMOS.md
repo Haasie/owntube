@@ -40,7 +40,9 @@ graph TD
 - **Host / Subdomain**: `youtube.haasie.nl` (of `owntube.haasie.nl`)
 - **TLS / HTTPS**: Let's Encrypt SSL aan
 - **Smart Shield**: Uit (zie [Video blijft hangen](#-video-blijft-hangen-op-iphone--safari))
-- **Cosmos Auth**: Optioneel (OwnTube heeft ook eigen ingebouwde accounts en authenticatie via Auth.js)
+- **Cosmos Auth**: Optioneel (OwnTube heeft ook eigen ingebouwde accounts en authenticatie via Auth.js).
+  Staat hij aan, maak dan ook de mediaroutes `/hls`, `/stream` en `/captions`
+  zonder auth aan, anders speelt de iPhone niets af (zie [stap 5](#-video-blijft-hangen-op-iphone--safari)).
 
 ### 2. Optionele Route: Directe Invidious Backend
 - **Target Type**: `Container`
@@ -135,8 +137,11 @@ seconden lopen en dan hangt hij weer. Loop dit in deze volgorde af:
    Draai daarna de diagnose opnieuw. Sectie 3 moet zonder token `403` geven
    (OwnTube weigert zelf) en met token `200` en
    `application/vnd.apple.mpegurl`. Een redirect in plaats van `403`? Dan
-   pakt Cosmos de hoofdroute eerst: verschuif de nieuwe routes in de
-   route-lijst en test opnieuw.
+   pakt Cosmos de hoofdroute eerst. Cosmos registreert routes van onder naar
+   boven (`buildFromConfig.go`), dus de **onderste** route in de lijst wint:
+   zet de drie nieuwe routes via **⋯ → Move to bottom** onder de hoofdroute,
+   sla op en test opnieuw. Nieuwe routes komen bovenaan de lijst, dus dit is
+   altijd nodig.
 
 ---
 
