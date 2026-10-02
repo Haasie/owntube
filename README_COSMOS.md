@@ -153,21 +153,24 @@ Elke push naar `main` draait `.github/workflows/deploy.yml`:
    de server op de vorige versie.
 2. Bouwt `apps/web/Dockerfile` en pusht `ghcr.io/haasie/owntube:latest`
    (plus een `sha-<commit>`-tag).
-3. Roept de Cosmos-webhook aan, zodat Cosmos de nieuwe image meteen ophaalt.
-
 `owntube` en `owntube-cache-warmer` dragen het label `cosmos-auto-update=true`
-en `pull_policy: always`. Zonder webhook pakt Cosmos de nieuwe image dus nog
-steeds op, maar pas bij zijn eigen periodieke check (dat kan uren duren).
+en `pull_policy: always`. De **native auto-update van Cosmos** rolt de nieuwe
+image daarmee vanzelf uit: Cosmos controleert **elke nacht om 02:00**
+(servertijd, vast in Cosmos' `src/CRON.go`, niet instelbaar) alle containers
+met dat label, haalt de image opnieuw op en maakt de container opnieuw aan als
+hij veranderd is.
 
-**Eenmalig, voor direct uitrollen:** open in Cosmos de ServApp `owntube` →
-**Settings**, kopieer de **Webhook URL** en zet hem als repo-secret:
+Meteen uitrollen in plaats van om 02:00: `./update.sh -f` op de server.
+
+**Optioneel, direct uitrollen bij elke push:** open in Cosmos de ServApp
+`owntube` → **Settings**, kopieer de **Webhook URL** en zet hem als repo-secret:
 
 ```bash
 gh secret set COSMOS_WEBHOOK_URL --repo Haasie/owntube
 ```
 
-(`gh` vraagt dan om de waarde; plak de URL.) Zonder secret geeft de workflow
-een waarschuwing in plaats van stil over te slaan.
+(`gh` vraagt dan om de waarde; plak de URL.) Zonder secret meldt de workflow
+dat de deploy om 02:00 gebeurt.
 
 **Controleren wat er live draait:**
 

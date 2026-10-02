@@ -111,16 +111,17 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Cosmos's auto-update (the cosmos-auto-update=true label) only checks
-      # on its own schedule, so push the redeploy actively. Without the secret
-      # this is a visible warning, not a silently skipped step.
+      # Deploys normally go through Cosmos's native auto-update: once a day at
+      # 02:00 it re-pulls every container labelled cosmos-auto-update=true and
+      # recreates it when the image changed (Cosmos src/CRON.go). The webhook
+      # is optional and only makes a deploy immediate.
       - name: Trigger Cosmos redeploy
         env:
           COSMOS_WEBHOOK_URL: ${{ secrets.COSMOS_WEBHOOK_URL }}
         run: |
           if [ -z "$COSMOS_WEBHOOK_URL" ]; then
-            echo "::warning title=Auto-deploy not immediate::The COSMOS_WEBHOOK_URL secret is missing. The image is in GHCR; Cosmos will pick it up on its next auto-update check instead of now. See README_COSMOS.md."
-            echo "- :warning: **Not redeployed yet.** Secret \`COSMOS_WEBHOOK_URL\` is missing; Cosmos picks the image up on its next auto-update check." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=Deploys at 02:00::Image is in GHCR. Cosmos's native auto-update rolls it out at its daily 02:00 check. For an immediate deploy run ./update.sh -f on the server."
+            echo "- :clock2: Image in GHCR; Cosmos's native auto-update deploys it at **02:00**. Immediate: \`./update.sh -f\` on the server." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
