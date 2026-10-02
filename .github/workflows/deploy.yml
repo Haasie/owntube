@@ -1,0 +1,140 @@
+name: Build and Push owntube to GHCR
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# A new push makes an in-progress build obsolete.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: haasie/owntube
+
+jobs:
+  # Nothing reaches the server unless lint and the web tests pass: every image
+  # this workflow pushes is picked up by Cosmos automatically.
+  verify:
+    name: Lint & test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+  build-and-push:
+    name: Build & Push Docker Image
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+          labels: |
+            cosmos-auto-update=true
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Puts the pushed digest in the run summary, so you can compare it
+      # with what's actually running on the server:
+      #   docker inspect owntube --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+      - name: Publish image summary
+        run: |
+          {
+            echo "### Image pushed to GHCR"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA:0:7}\` |"
+            echo "| Digest | \`${{ steps.build.outputs.digest }}\` |"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Cosmos's auto-update (the cosmos-auto-update=true label) only checks
+      # on its own schedule, so push the redeploy actively. Without the secret
+      # this is a visible warning, not a silently skipped step.
+      - name: Trigger Cosmos redeploy
+        env:
+          COSMOS_WEBHOOK_URL: ${{ secrets.COSMOS_WEBHOOK_URL }}
+        run: |
+          if [ -z "$COSMOS_WEBHOOK_URL" ]; then
+            echo "::warning title=Auto-deploy not immediate::The COSMOS_WEBHOOK_URL secret is missing. The image is in GHCR; Cosmos will pick it up on its next auto-update check instead of now. See README_COSMOS.md."
+            echo "- :warning: **Not redeployed yet.** Secret \`COSMOS_WEBHOOK_URL\` is missing; Cosmos picks the image up on its next auto-update check." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "Calling Cosmos webhook..."
+          status=$(curl -sS -X POST --retry 3 --retry-delay 5 --max-time 30 \
+            -o /tmp/cosmos-response.txt -w '%{http_code}' \
+            "$COSMOS_WEBHOOK_URL")
+
+          echo "HTTP $status"
+          cat /tmp/cosmos-response.txt || true
+
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "::error title=Cosmos redeploy failed::Webhook returned HTTP $status. The image is in GHCR, but the server was not updated."
+            exit 1
+          fi
+
+          echo "- :white_check_mark: Cosmos redeploy triggered (HTTP $status)." >> "$GITHUB_STEP_SUMMARY"

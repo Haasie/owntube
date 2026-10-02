@@ -85,10 +85,11 @@ services:
 
   owntube:
     container_name: owntube
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    image: owntube:latest
+    # Built by .github/workflows/deploy.yml on every push to main (after lint +
+    # tests pass). Cosmos's auto-update pulls the new :latest and recreates the
+    # container; the workflow's webhook makes that immediate. README_COSMOS.md.
+    image: ghcr.io/haasie/owntube:latest
+    pull_policy: always
     restart: unless-stopped
     environment:
       DATABASE_PATH: /app/apps/web/data/owntube.db
@@ -130,11 +131,12 @@ services:
     networks:
       - cosmos-network
     labels:
-      - "cosmos-auto-update=false"
+      - "cosmos-auto-update=true"
 
   owntube-cache-warmer:
     container_name: owntube-cache-warmer
-    image: owntube:latest
+    image: ghcr.io/haasie/owntube:latest
+    pull_policy: always
     restart: unless-stopped
     depends_on:
       owntube:
@@ -164,7 +166,7 @@ services:
     networks:
       - cosmos-network
     labels:
-      - "cosmos-auto-update=false"
+      - "cosmos-auto-update=true"
 
 networks:
   cosmos-network:

@@ -59,7 +59,8 @@ if git fetch upstream "$BRANCH" --quiet >> "$LOG_FILE" 2>&1; then
             log "  * $line"
         done
         log "Mergen en testen (bewuste handeling i.v.m. stabiliteit):"
-        log "  cd $REPO_DIR && git merge upstream/$BRANCH && pnpm test && docker compose build owntube && docker compose up -d owntube && git push origin $BRANCH"
+        log "  cd $REPO_DIR && git merge upstream/$BRANCH && pnpm test && git push origin $BRANCH"
+        log "  (GitHub Actions bouwt daarna ghcr.io/haasie/owntube:latest en Cosmos rolt hem uit.)"
     else
         log "OwnTube is up-to-date met mdbraber/owntube."
     fi
@@ -80,12 +81,14 @@ if [ -d "$COMPANION_DIR/.git" ] && git -C "$COMPANION_DIR" fetch origin master -
     fi
 fi
 
-# 3. If force rebuild requested, rebuild local OwnTube image
+# 3. Forced update: pull the latest OwnTube image now instead of waiting for
+#    Cosmos. The image is built by GitHub Actions (.github/workflows/deploy.yml)
+#    and pushed to ghcr.io/haasie/owntube; nothing is built on this host.
 if [ "$FORCE_REBUILD" = true ]; then
-    log "Force rebuild requested. Building and restarting OwnTube..."
-    docker compose build owntube >> "$LOG_FILE" 2>&1
+    log "Forced update requested. Pulling ghcr.io/haasie/owntube:latest and recreating OwnTube..."
+    docker compose pull owntube owntube-cache-warmer >> "$LOG_FILE" 2>&1
     docker compose up -d --remove-orphans owntube owntube-cache-warmer >> "$LOG_FILE" 2>&1
-    log "Rebuild complete."
+    log "Update complete."
 fi
 
 # 4. Verify stack health
