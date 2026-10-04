@@ -16,7 +16,6 @@ import {
   type QualityModel,
 } from "@/components/player/player-quality";
 import type { SponsorBlockChromeProps } from "@/components/player/player-types";
-import { useAirPlayTrace } from "@/hooks/use-airplay-trace";
 import { useBackgroundPlayback } from "@/hooks/use-background-playback";
 import {
   pickDashVideoFamily,
@@ -305,7 +304,6 @@ export function HlsVodBlock({
   );
 
   useReportVideoIntrinsics(videoRef, onVideoIntrinsics);
-  useAirPlayTrace(videoRef, reactKey);
 
   // Shorts autoplay: the browser blocks unmuted autoplay, so (like the muxed
   // block) keep retrying play on canplay/loadeddata — muted while the shared
