@@ -10,6 +10,7 @@ import {
 import { isIosLikeBrowser } from "@/lib/ios-playback";
 import { writePlayerMediaPrefs } from "@/lib/player-media-prefs";
 import { volumeGainFor } from "@/lib/player-volume-gain";
+import { isPlayingRemotely } from "@/lib/remote-playback";
 
 export function useNativeAdapter(opts: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
@@ -171,6 +172,11 @@ export function useNativeAdapter(opts: {
   // seek path (segment re-fetch + decoder resync) the same way the manual
   // skip does. Cooldown keeps a genuinely video-less stream (none today) from
   // hiccuping the audio more than once per 10s.
+  //
+  // Not while AirPlaying: the Apple TV decodes, so the local frame counter is
+  // flat by design. Treating that as a freeze nudged the receiver every ~12 s
+  // (cooldown + two strikes), each nudge a seek that made the Apple TV
+  // rebuffer — the periodic AirPlay stutter.
   useEffect(() => {
     const v = videoRef.current;
     if (!v || typeof v.getVideoPlaybackQuality !== "function") return;
@@ -179,7 +185,7 @@ export function useNativeAdapter(opts: {
     let strikes = 0;
     let lastNudge = 0;
     const iv = window.setInterval(() => {
-      if (v.paused || v.seeking || v.readyState < 2) {
+      if (v.paused || v.seeking || v.readyState < 2 || isPlayingRemotely(v)) {
         strikes = 0;
         lastTime = v.currentTime;
         return;
