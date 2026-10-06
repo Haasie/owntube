@@ -39,6 +39,16 @@ export const metadata: Metadata = {
   },
   description: "Self-hosted video front-end with Piped / Invidious",
   manifest: "/manifest.webmanifest",
+  // "Add to Home Screen" from Safari directly (bypassing the iOS Tauri
+  // wrapper) otherwise launches with no standalone/status-bar declaration at
+  // all — capable:true plus black-translucent matches the manifest/app
+  // shell's dark-leaning chrome (background_color/theme_color in
+  // manifest.webmanifest, and apps/ios's own backgroundColor).
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "owntube",
+  },
   icons: {
     icon: [{ url: `/favicon-dark.ico?v=${FAVICON_VERSION}`, sizes: "any" }],
     apple: [

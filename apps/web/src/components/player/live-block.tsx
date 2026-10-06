@@ -51,8 +51,15 @@ export function LiveBlock({
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [volume, setVolume] = useState(() => readPlayerMediaPrefs().volume);
+  const [playbackFailed, setPlaybackFailed] = useState(false);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new broadcast source clears the previous failure.
+  useEffect(() => {
+    setPlaybackFailed(false);
+  }, [reactKey]);
 
   const emitPlaybackError = useCallback(() => {
+    setPlaybackFailed(true);
     if (!onPlaybackError) return;
     window.setTimeout(() => onPlaybackError(), 0);
   }, [onPlaybackError]);
@@ -109,6 +116,19 @@ export function LiveBlock({
     if (!adapter.canPlay || !adapter.paused) return;
     liveAutoplayTriedRef.current = true;
     adapter.play();
+    // adapter.play() is fire-and-forget, so a blocked unmuted autoplay (iOS
+    // Safari without a very recent gesture) can't be caught directly here —
+    // check back shortly and fall back to muted so the broadcast actually
+    // starts instead of sitting paused; the viewer can unmute once it's going.
+    const id = window.setTimeout(() => {
+      const v = videoRef.current;
+      if (v?.paused && !v.muted) {
+        v.dataset.otAutoMuted = "1";
+        v.muted = true;
+        void v.play().catch(() => {});
+      }
+    }, 500);
+    return () => window.clearTimeout(id);
   }, [adapter.canPlay, adapter.paused, adapter.play, reactKey]);
 
   return (
@@ -129,6 +149,7 @@ export function LiveBlock({
         poster={poster}
         playsInline
         preload="auto"
+        {...{ "x-webkit-airplay": "allow" }}
         // src + caption <track>s are on the media origin (media-origin.ts);
         // cross-origin <track> loading requires this. No credentials needed.
         crossOrigin="anonymous"
@@ -170,6 +191,53 @@ export function LiveBlock({
         onPlayNext={onPlayNext}
         isLive
       />
+      {playbackFailed ? (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-black/90 p-6 text-center text-white backdrop-blur-sm">
+          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-600/20 text-red-500">
+            <svg
+              className="h-6 w-6"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+          </div>
+          <h3 className="mb-1 text-lg font-bold">Live Stream Unavailable</h3>
+          <p className="mb-4 max-w-md text-xs text-neutral-300 sm:text-sm">
+            YouTube live streams require proprietary streaming that is not
+            supported by this browser.
+          </p>
+          <a
+            href={`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:bg-red-700"
+          >
+            <span>Watch Live on YouTube</span>
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+              />
+            </svg>
+          </a>
+        </div>
+      ) : null}
     </div>
   );
 }

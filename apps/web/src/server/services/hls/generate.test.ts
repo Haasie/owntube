@@ -72,6 +72,19 @@ describe("pickAudioTracks", () => {
     expect(tracks[0]?.lang).toBeNull();
   });
 
+  it("collapses drc tracks without language to a single original track", () => {
+    const aacDrc: AdaptiveFormat = {
+      ...aacPlain,
+      bitrate: 130_000,
+      url: `https://inv.example/videoplayback?itag=140&dur=562.433&xtags=${xt("drc=1")}`,
+    };
+    const tracks = pickAudioTracks([aacPlain, aacDrc]);
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0]?.isDefault).toBe(true);
+    expect(tracks[0]?.isOriginal).toBe(true);
+    expect(tracks[0]?.lang).toBeNull();
+  });
+
   it("orders the original before dubs even when upstream lists dubs first", () => {
     const tracks = pickAudioTracks([dubEn, originalNlDrc, originalNl]);
     expect(tracks.map((t) => t.lang)).toEqual(["nl-NL", "en-US"]);
@@ -79,26 +92,43 @@ describe("pickAudioTracks", () => {
     // The non-drc row wins within the original group.
     expect(tracks[0]?.xtags).toBe("acont=original:lang=nl-NL");
   });
+
+  it("caps excessive auto-dubs to max 3 tracks prioritizing original, nl and en", () => {
+    const makeDub = (lang: string) => ({
+      ...aacPlain,
+      url: `https://inv.example/videoplayback?itag=140&dur=562.433&xtags=${xt(`acont=dubbed:lang=${lang}`)}`,
+    });
+    const tracks = pickAudioTracks([
+      originalNl,
+      makeDub("ar"),
+      makeDub("de"),
+      makeDub("es"),
+      makeDub("en-US"),
+      makeDub("fr"),
+      makeDub("ja"),
+    ]);
+    expect(tracks.length).toBeLessThanOrEqual(3);
+    expect(tracks[0]?.lang).toBe("nl-NL");
+    expect(tracks[0]?.isDefault).toBe(true);
+    expect(tracks.map((t) => t.lang)).toContain("en-US");
+  });
 });
 
 describe("buildMasterPlaylist", () => {
   it("keeps the legacy single-audio rendition shape", () => {
     const m3u8 = buildMasterPlaylist([avc720], pickAudioTracks([aacPlain]));
     expect(m3u8).toContain(
-      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES,URI="media.m3u8?itag=140"',
+      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="2",URI="media.m3u8?itag=140"',
     );
   });
 
-  it("lists one rendition per language with the original as DEFAULT", () => {
+  it("emits the clean single-audio rendition shape even when multiple dubs exist", () => {
     const m3u8 = buildMasterPlaylist(
       [avc720],
       pickAudioTracks([dubEn, originalNlDrc, originalNl]),
     );
     expect(m3u8).toContain(
-      `NAME="Dutch (Original)",LANGUAGE="nl-NL",DEFAULT=YES,AUTOSELECT=YES,URI="media.m3u8?itag=140&xtags=${xt("acont=original:lang=nl-NL")}"`,
-    );
-    expect(m3u8).toContain(
-      `NAME="English",LANGUAGE="en-US",DEFAULT=NO,AUTOSELECT=NO,URI="media.m3u8?itag=140&xtags=${xt("acont=dubbed-auto:lang=en-US")}"`,
+      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Audio",DEFAULT=YES,AUTOSELECT=YES,LANGUAGE="nl-NL",CHANNELS="2",URI="media.m3u8?itag=140"',
     );
     // Variant rows still reference the shared audio group.
     expect(m3u8).toContain('AUDIO="aud"');

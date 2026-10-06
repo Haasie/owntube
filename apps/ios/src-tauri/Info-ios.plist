@@ -3,8 +3,9 @@
 <plist version="1.0">
   <dict>
     <!-- Keep audio playing when the app is backgrounded or the screen is
-         locked. Paired with the AVAudioSession(.playback) activation in native
-         code; without both, iOS suspends WKWebView media on lock. -->
+         locked. Paired with the AVAudioSession(.playback) activation in
+         src/lib.rs (audio_session::activate_playback, called from .setup());
+         without both, iOS suspends WKWebView media on lock. -->
     <key>UIBackgroundModes</key>
     <array>
       <string>audio</string>

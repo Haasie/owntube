@@ -27,3 +27,10 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
   "NSString",
   "NSUserDefaults",
 ] }
+
+# Activate AVAudioSession(.playback) at launch so WKWebView media survives
+# backgrounding/lock and can route to AirPlay (see audio_session in lib.rs).
+# Default features kept on (not pinned to a minimal feature list like the
+# foundation crate above) since this hasn't been build-verified on-device.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-avf-audio = "0.3"

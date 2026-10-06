@@ -24,6 +24,7 @@ import {
   useIdleVisible,
 } from "@/components/player/player-fullscreen";
 import {
+  AirPlayIcon,
   BigPlayOverlayIcon,
   CaptionsIcon,
   CinemaIcon,
@@ -78,6 +79,7 @@ export function PlayerChrome({
   shortsMode = false,
   miniStartPaused = false,
   isLive = false,
+  splitAudioRisksAirPlaySilence = false,
 }: ChromeProps) {
   const [hydrated, setHydrated] = useState(false);
   const { active: fsActive, toggle: toggleFs } = useFullscreenShell(shellRef);
@@ -86,6 +88,51 @@ export function PlayerChrome({
   const [showVolPanel, setShowVolPanel] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [airPlaySplitNotice, setAirPlaySplitNotice] = useState(false);
+  const airPlaySplitNoticeTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  // Split playback's companion <audio> element never joins the AirPlay route
+  // the <video> picker sets up, so casting sends silent picture. Call the
+  // picker first (must stay synchronous with the click — WebKit invalidates
+  // the gesture token otherwise), then surface an honest, transient notice.
+  const showAirPlayPickerWithSplitNotice = () => {
+    adapter.showAirPlayPicker?.();
+    if (!splitAudioRisksAirPlaySilence) return;
+    if (airPlaySplitNoticeTimerRef.current) {
+      clearTimeout(airPlaySplitNoticeTimerRef.current);
+    }
+    setAirPlaySplitNotice(true);
+    airPlaySplitNoticeTimerRef.current = setTimeout(() => {
+      setAirPlaySplitNotice(false);
+      airPlaySplitNoticeTimerRef.current = null;
+    }, 6000);
+  };
+  useEffect(() => {
+    return () => {
+      if (airPlaySplitNoticeTimerRef.current) {
+        clearTimeout(airPlaySplitNoticeTimerRef.current);
+      }
+    };
+  }, []);
+  // YouTube-style double-tap seek on touch: the side of the video tapped twice
+  // (left/right ~third) seeks ±10s; further taps on the same side within the
+  // window keep adding 10s. `seekRipple` drives the brief "« 20 s" badge.
+  const lastTapRef = useRef<{ t: number; side: -1 | 0 | 1; seeking: boolean }>({
+    t: 0,
+    side: 0,
+    seeking: false,
+  });
+  const [seekRipple, setSeekRipple] = useState<{
+    side: -1 | 1;
+    seconds: number;
+    tick: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!seekRipple) return;
+    const t = window.setTimeout(() => setSeekRipple(null), 750);
+    return () => window.clearTimeout(t);
+  }, [seekRipple]);
   const [autoCenterHint, setAutoCenterHint] = useState<{
     kind: "play" | "pause";
     tick: number;
@@ -194,6 +241,28 @@ export function PlayerChrome({
     // the center button). Toggling here paused the video on every tap meant
     // to reveal the controls — including taps on the hidden scrubber.
     if (surfacePointerTypeRef.current === "touch" && !shortsMode) {
+      const now = Date.now();
+      const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const x = box.width > 0 ? (e.clientX - box.left) / box.width : 0.5;
+      const side: -1 | 0 | 1 = x < 0.35 ? -1 : x > 0.65 ? 1 : 0;
+      const last = lastTapRef.current;
+      const windowMs = last.seeking ? 700 : 300;
+      if (
+        side !== 0 &&
+        !isLive &&
+        last.side === side &&
+        now - last.t < windowMs
+      ) {
+        lastTapRef.current = { t: now, side, seeking: true };
+        skip(side * 10);
+        setSeekRipple((prev) => ({
+          side,
+          seconds: last.seeking && prev?.side === side ? prev.seconds + 10 : 10,
+          tick: now,
+        }));
+        return;
+      }
+      lastTapRef.current = { t: now, side, seeking: false };
       ping();
       return;
     }
@@ -233,6 +302,12 @@ export function PlayerChrome({
     isLive && Number.isFinite(duration) && duration > LIVE_EDGE_SECONDS;
   const behindLiveEdge = liveWithDvr && seekPos < duration - LIVE_EDGE_SECONDS;
   const chromeShown = (shortsMode || visible) && !hold2xUi;
+  const autoMuted =
+    hydrated &&
+    !miniMode &&
+    !shortsMode &&
+    adapter.muted &&
+    shellRef.current?.querySelector("video")?.dataset.otAutoMuted === "1";
   const captionText = captions.kind === "tracks" ? captions.activeText : null;
   const currentChapterTitle =
     chapters.length > 1
@@ -254,19 +329,73 @@ export function PlayerChrome({
         onPointerUp={onSurfacePointerUp}
         onPointerCancel={onSurfacePointerUp}
         onPointerLeave={onSurfacePointerLeave}
-        onDoubleClick={shortsMode ? undefined : () => void toggleFs()}
+        onDoubleClick={
+          shortsMode
+            ? undefined
+            : () => {
+                // Touch double-taps seek (above); only a mouse double-click
+                // toggles fullscreen, as on YouTube.
+                if (surfacePointerTypeRef.current === "touch") return;
+                void toggleFs();
+              }
+        }
         className="absolute inset-0 z-10 cursor-pointer bg-transparent"
       />
 
       <CaptionOverlay text={captionText} raised={chromeShown} />
 
-      {/* Stands in for WebKit's "playing in picture in picture" placeholder,
-          which fades out with the inline <video> while it's in native PiP
-          (see player-captions.ts). Shown by CSS off `data-native-pip`. */}
-      <div className="ot-pip-placeholder" aria-hidden>
-        <PipIcon className="h-10 w-10" />
-        <span>Playing in Picture in Picture</span>
-      </div>
+      {seekRipple ? (
+        <div
+          key={seekRipple.tick}
+          className={cn(
+            "pointer-events-none absolute inset-y-0 z-30 flex w-[38%] items-center justify-center bg-white/10",
+            seekRipple.side < 0
+              ? "left-0 rounded-r-[50%]"
+              : "right-0 rounded-l-[50%]",
+          )}
+          aria-hidden
+        >
+          <span className="rounded-full bg-black/60 px-3 py-1.5 text-sm font-semibold tabular-nums text-white">
+            {seekRipple.side < 0
+              ? `« ${seekRipple.seconds} s`
+              : `${seekRipple.seconds} s »`}
+          </span>
+        </div>
+      ) : null}
+
+      {/* YouTube-style "tap to unmute": when the browser refused unmuted
+          autoplay and we started muted instead (see the autoplay drivers'
+          `otAutoMuted` mark), a small speaker icon is too easy to miss. */}
+      {autoMuted ? (
+        <button
+          type="button"
+          data-controls
+          onClick={(e) => {
+            e.stopPropagation();
+            const el = shellRef.current?.querySelector("video");
+            if (el) delete el.dataset.otAutoMuted;
+            adapter.toggleMuted();
+            ping();
+          }}
+          className="absolute left-3 top-3 z-40 flex items-center gap-2 rounded-full bg-black/75 px-3.5 py-2 text-sm font-semibold text-white shadow-lg backdrop-blur-sm transition active:scale-95"
+        >
+          <MuteIcon className="h-5 w-5" />
+          <span>Tap to unmute</span>
+        </button>
+      ) : null}
+
+      {airPlaySplitNotice ? (
+        <div className="pointer-events-none absolute inset-x-0 top-4 z-40 flex justify-center px-4">
+          {/* biome-ignore lint/a11y/useSemanticElements: transient status text, not a form/alert widget */}
+          <div
+            role="status"
+            className="max-w-[90%] rounded-full bg-black/80 px-4 py-2 text-center text-xs text-white shadow-lg sm:text-sm"
+          >
+            Picture is casting to AirPlay — audio for this track stays on this
+            device.
+          </div>
+        </div>
+      ) : null}
 
       {/* On-video scrub preview: while actively dragging the scrubber, the frame
           fills the whole video area (YouTube-style) with the target time floated
@@ -470,7 +599,7 @@ export function PlayerChrome({
                     aria-label={a.label}
                     title={a.label}
                     className={cn(
-                      "flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:bg-black/60",
+                      "flex h-10 w-10 items-center justify-center rounded-full text-white transition hover:bg-black/60",
                       a.active ? "bg-black/60" : "bg-black/40",
                     )}
                   >
@@ -568,7 +697,7 @@ export function PlayerChrome({
               <button
                 type="button"
                 onClick={() => adapter.togglePaused()}
-                className="hidden h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex"
+                className="hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex"
                 aria-label={adapter.paused ? "Play" : "Pause"}
               >
                 {adapter.paused ? (
@@ -589,7 +718,7 @@ export function PlayerChrome({
                 <button
                   type="button"
                   onClick={() => adapter.toggleMuted()}
-                  className="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15"
+                  className="flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15"
                   aria-label={adapter.muted ? "Unmute" : "Mute"}
                 >
                   {levelUi < 0.01 ? (
@@ -681,7 +810,7 @@ export function PlayerChrome({
                   <button
                     type="button"
                     onClick={onPlayNext}
-                    className="hidden h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex"
+                    className="hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex"
                     aria-label="Play next video"
                     title={nextUp.title}
                   >
@@ -735,7 +864,7 @@ export function PlayerChrome({
                     captions.setActive(captions.activeIndex === null ? 0 : null)
                   }
                   className={cn(
-                    "hidden h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex",
+                    "hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex",
                     captions.activeIndex !== null
                       ? "bg-white/15 text-white"
                       : "",
@@ -754,7 +883,7 @@ export function PlayerChrome({
                     type="button"
                     onClick={() => onSettingsOpenChange(!settingsOpen)}
                     className={cn(
-                      "flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15",
+                      "flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15",
                       settingsOpen ? "bg-white/15" : "",
                     )}
                     aria-label="Settings"
@@ -772,7 +901,7 @@ export function PlayerChrome({
                   type="button"
                   onClick={() => onToggleCinema()}
                   className={cn(
-                    "hidden h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex",
+                    "hidden h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15 sm:flex",
                     cinemaMode ? "bg-white/15 text-white" : "",
                   )}
                   aria-label={
@@ -789,7 +918,7 @@ export function PlayerChrome({
                 <button
                   type="button"
                   onClick={() => setMobileMenuOpen(true)}
-                  className="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15 sm:hidden"
+                  className="flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15 sm:hidden"
                   aria-label="More controls"
                   aria-haspopup="dialog"
                   aria-expanded={mobileMenuOpen}
@@ -811,7 +940,7 @@ export function PlayerChrome({
                 <button
                   type="button"
                   onClick={() => void toggleFs()}
-                  className="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15"
+                  className="flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15"
                   aria-label={fsActive ? "Exit fullscreen" : "Enter fullscreen"}
                 >
                   {fsActive ? (
@@ -827,7 +956,7 @@ export function PlayerChrome({
                   type="button"
                   onClick={() => adapter.togglePictureInPicture()}
                   className={cn(
-                    "flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-white/15",
+                    "flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15",
                     adapter.pictureInPicture ? "bg-white/15" : "",
                   )}
                   aria-label={
@@ -837,6 +966,36 @@ export function PlayerChrome({
                   }
                 >
                   <PipIcon className="h-5 w-5" />
+                </button>
+              ) : null}
+
+              {hydrated && adapter.canAirPlay ? (
+                <button
+                  type="button"
+                  onClick={showAirPlayPickerWithSplitNotice}
+                  className={cn(
+                    "flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-white/15",
+                    adapter.airPlayActive
+                      ? "bg-white/15 text-[hsl(var(--primary))]"
+                      : "",
+                  )}
+                  aria-label={
+                    adapter.airPlayActive
+                      ? "AirPlay active (connected)"
+                      : "AirPlay"
+                  }
+                >
+                  <AirPlayIcon className="h-5 w-5" />
+                </button>
+              ) : hydrated && adapter.airPlayUnavailableReason ? (
+                <button
+                  type="button"
+                  disabled
+                  title={adapter.airPlayUnavailableReason}
+                  aria-label={adapter.airPlayUnavailableReason}
+                  className="flex h-10 w-10 cursor-not-allowed items-center justify-center rounded-full opacity-40"
+                >
+                  <AirPlayIcon className="h-5 w-5" />
                 </button>
               ) : null}
             </div>
@@ -849,6 +1008,7 @@ export function PlayerChrome({
           open={mobileMenuOpen}
           onOpenChange={setMobileMenuOpen}
           shellRef={shellRef}
+          fsActive={fsActive}
           quality={quality}
           audio={audio}
           captions={captions}
@@ -862,6 +1022,10 @@ export function PlayerChrome({
           canPip={false}
           pipActive={adapter.pictureInPicture}
           onTogglePip={() => adapter.togglePictureInPicture()}
+          canAirPlay={Boolean(adapter.canAirPlay)}
+          airPlayActive={Boolean(adapter.airPlayActive)}
+          airPlayUnavailableReason={adapter.airPlayUnavailableReason}
+          onShowAirPlayPicker={showAirPlayPickerWithSplitNotice}
         />
       ) : null}
 
@@ -887,8 +1051,9 @@ export function PlayerChrome({
 /**
  * Mobile counterpart of the desktop control cluster: everything beyond
  * play/seek/volume/fullscreen lives in this bottom sheet, opened by the ⋯
- * button. Rendered inside the player root (not portaled) so it also shows in
- * element fullscreen, where `fixed` positions against the fullscreen element.
+ * button. In non-fullscreen mode, portals to <body> so it paints above the
+ * shell bottom navigation bar; in element fullscreen, portals into shellRef
+ * so it stays visible inside the fullscreen container.
  */
 function PlayerMobileMenu({
   quality,
@@ -904,9 +1069,14 @@ function PlayerMobileMenu({
   canPip,
   pipActive,
   onTogglePip,
+  canAirPlay = false,
+  airPlayActive = false,
+  airPlayUnavailableReason,
+  onShowAirPlayPicker,
   open,
   onOpenChange,
   shellRef,
+  fsActive = false,
 }: Pick<
   ComponentProps<typeof SettingsMenu>,
   "quality" | "audio" | "captions" | "rate" | "setRate"
@@ -919,10 +1089,15 @@ function PlayerMobileMenu({
   canPip: boolean;
   pipActive: boolean;
   onTogglePip: () => void;
+  canAirPlay?: boolean;
+  airPlayActive?: boolean;
+  airPlayUnavailableReason?: string;
+  onShowAirPlayPicker?: () => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** The element that goes fullscreen — the sheet portals into it so it also paints there. */
   shellRef: React.RefObject<HTMLElement | null>;
+  fsActive?: boolean;
 }) {
   const onClose = () => onOpenChange(false);
   return (
@@ -930,11 +1105,11 @@ function PlayerMobileMenu({
       open={open}
       onOpenChange={onOpenChange}
       title="Player options"
-      container={shellRef}
+      container={fsActive ? shellRef : undefined}
       panelClassName="border-white/10 bg-zinc-950/95 text-zinc-100 backdrop-blur-md"
       contentClassName="text-sm"
     >
-      {nextUp || canPip ? (
+      {nextUp || canPip || canAirPlay || airPlayUnavailableReason ? (
         <div className="px-1 py-1">
           {nextUp ? (
             <>
@@ -992,9 +1167,46 @@ function PlayerMobileMenu({
               </span>
             </button>
           ) : null}
+          {canAirPlay ? (
+            <button
+              type="button"
+              onClick={() => {
+                onShowAirPlayPicker?.();
+                onClose();
+              }}
+              className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 hover:bg-white/10"
+              aria-pressed={airPlayActive}
+            >
+              <span>AirPlay</span>
+              <span
+                className={cn(
+                  "text-xs",
+                  airPlayActive
+                    ? "text-[hsl(var(--primary))]"
+                    : "text-zinc-400",
+                )}
+              >
+                {airPlayActive ? "Connected" : "Connect"}
+              </span>
+            </button>
+          ) : airPlayUnavailableReason ? (
+            <div
+              className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-zinc-500"
+              title={airPlayUnavailableReason}
+            >
+              <span>AirPlay</span>
+              <span className="text-xs">Unavailable</span>
+            </div>
+          ) : null}
         </div>
       ) : null}
-      <div className={nextUp || canPip ? "border-t border-white/10" : ""}>
+      <div
+        className={
+          nextUp || canPip || canAirPlay || airPlayUnavailableReason
+            ? "border-t border-white/10"
+            : ""
+        }
+      >
         <SettingsMenu
           variant="embedded"
           quality={quality}

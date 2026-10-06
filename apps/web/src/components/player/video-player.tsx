@@ -47,6 +47,7 @@ import {
   heightCapForDefaultQuality,
   readDefaultPlaybackQuality,
 } from "@/lib/default-playback-quality";
+import { prefersMuxedForAirPlaySafety } from "@/lib/ios-playback";
 import { isLiveDashManifestUrl } from "@/lib/pick-playback";
 import { nextPlaybackVariantIndex } from "@/lib/playback-variant-fallback";
 import {
@@ -227,7 +228,17 @@ export function VideoPlayer({
     [setCinemaMode],
   );
 
-  const effectivePayload: VideoPlayerPayload = payload;
+  const [overridePayload, setOverridePayload] =
+    useState<VideoPlayerPayload | null>(null);
+
+  const hlsFallbackAppliedRef = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new video starts back on its own (HLS) payload.
+  useEffect(() => {
+    setOverridePayload(null);
+    hlsFallbackAppliedRef.current = false;
+  }, [videoId]);
+
+  const effectivePayload: VideoPlayerPayload = overridePayload ?? payload;
 
   const displayPoster = shortsMode ? undefined : poster;
 
@@ -273,7 +284,12 @@ export function VideoPlayer({
     if (typeof restoredVolume === "number" && Number.isFinite(restoredVolume)) {
       return Math.min(1, Math.max(0, restoredVolume));
     }
-    return readPlayerMediaPrefs().volume;
+    const prefVol = readPlayerMediaPrefs().volume;
+    return typeof prefVol === "number" &&
+      Number.isFinite(prefVol) &&
+      prefVol > 0
+      ? prefVol
+      : 0.48;
   });
   const [queue, setQueue] = useState<WatchQueueItem[]>([]);
   const [autoplayNext, setAutoplayNext] = useState(autoplayNextDefault ?? true);
@@ -380,6 +396,7 @@ export function VideoPlayer({
     [],
   );
 
+  const lastResetVideoIdRef = useRef(videoId);
   useEffect(() => {
     if (
       miniMode &&
@@ -391,12 +408,26 @@ export function VideoPlayer({
     const pref = shortsMode
       ? "360p-muxed"
       : (defaultPlaybackQualityProp ?? readDefaultPlaybackQuality());
-    setQualityIndex(initialQualityIndexForPayload(effectivePayload, pref));
-    setResumeSeekSeconds(undefined);
+    // After an HLS→progressive fallback the variants are already ordered for
+    // this device (muxed-first on AirPlay-capable WebKit, default-quality-first
+    // elsewhere), so start on the first one. Re-applying the default-quality
+    // pick here would land on a huge split rung — on iOS that meant Safari
+    // seeking through a ~900 MB progressive file and sitting on 0:00.
+    setQualityIndex(
+      overridePayload
+        ? 0
+        : initialQualityIndexForPayload(effectivePayload, pref),
+    );
+    if (lastResetVideoIdRef.current !== videoId) {
+      lastResetVideoIdRef.current = videoId;
+      setResumeSeekSeconds(undefined);
+    }
     setSettingsOpen(false);
     variantFallbackAttemptsRef.current = 0;
   }, [
     effectivePayload,
+    overridePayload,
+    videoId,
     defaultPlaybackQualityProp,
     initialQualityIndexProp,
     miniMode,
@@ -453,6 +484,61 @@ export function VideoPlayer({
 
   const handlePlaybackError = useCallback(() => {
     if (
+      effectivePayload.mode === "hls" &&
+      effectivePayload.progressiveFallback &&
+      effectivePayload.progressiveFallback.length > 0
+    ) {
+      // The native-HLS path reports one failure through both the element's
+      // `onError` prop and its own listener — two calls in the same tick,
+      // both still seeing the HLS payload. Only the first may swap sources.
+      if (hlsFallbackAppliedRef.current) return;
+      hlsFallbackAppliedRef.current = true;
+      console.warn(
+        "[VideoPlayer] HLS playback failed, falling back to progressive variants",
+        effectivePayload.progressiveFallback,
+      );
+      try {
+        void fetch("/api/client-log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            component: "VideoPlayer",
+            videoId,
+            eventType: "hls_fallback_to_progressive",
+            fallbackCount: effectivePayload.progressiveFallback.length,
+          }),
+        }).catch(() => {});
+      } catch {}
+      const media = playerMediaRootRef.current?.querySelector("video");
+      const currentTime =
+        media && Number.isFinite(media.currentTime) ? media.currentTime : 0;
+      if (currentTime > 0) {
+        setResumeSeekSeconds(currentTime);
+      }
+      // On any WebKit browser that can AirPlay (iOS/iPadOS or desktop macOS
+      // Safari), split video+audio (separate <video muted> + <audio>) drifts
+      // apart during AirPlay / Screen Mirroring: the two elements are
+      // buffered independently over the wireless link and diverge by
+      // hundreds of ms. Prefer muxed (single-container, physically
+      // sync-guaranteed) even though max resolution is lower.
+      let fallbackVariants = effectivePayload.progressiveFallback;
+      if (prefersMuxedForAirPlaySafety()) {
+        const muxed = fallbackVariants.filter((v) => v.t === "muxed");
+        if (muxed.length > 0) {
+          fallbackVariants = [
+            ...muxed,
+            ...fallbackVariants.filter((v) => v.t !== "muxed"),
+          ];
+        }
+      }
+      setOverridePayload({
+        mode: "progressive",
+        variants: fallbackVariants,
+      });
+      return;
+    }
+
+    if (
       effectivePayload.mode === "progressive" &&
       progressiveMobileSafe &&
       progressiveMobileSafe.length > 1
@@ -506,7 +592,7 @@ export function VideoPlayer({
     }
   }, [
     active,
-    effectivePayload.mode,
+    effectivePayload,
     onEndedExternal,
     progressiveMobileSafe,
     qualityIndex,

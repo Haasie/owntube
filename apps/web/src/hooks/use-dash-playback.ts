@@ -282,9 +282,33 @@ export function useDashPlayback(
         // residential IP gets blocked fetching YouTube's timedtext — see
         // captions/[videoId]/route.ts) and the web player doesn't even render
         // dash.js's own text tracks (defaultEnabled: false above; captions
-        // come from <track> instead). A failed "cc" track must not tear down
-        // an otherwise-healthy video/audio pipeline.
+        // come from <track> instead). A failed "cc" track or text-track download
+        // must not tear down an otherwise-healthy video/audio pipeline.
         if (e.error === "cc") return;
+        const errObj = e as {
+          error?: unknown;
+          event?: { id?: string; url?: string; message?: string };
+        };
+        if (
+          errObj.error === "download" &&
+          (errObj.event?.id?.startsWith("cap-") ||
+            (typeof errObj.event?.url === "string" &&
+              errObj.event.url.includes("/captions/")))
+        ) {
+          return;
+        }
+        if (typeof errObj.error === "object" && errObj.error !== null) {
+          const msg =
+            (errObj.error as { message?: string }).message?.toLowerCase() ?? "";
+          if (
+            msg.includes("caption") ||
+            msg.includes("timedtext") ||
+            msg.includes("vtt") ||
+            msg.includes("texttrack")
+          ) {
+            return;
+          }
+        }
         onFatalErrorRef.current?.();
       });
 
@@ -568,6 +592,11 @@ export function useDashPlayback(
           ? start
           : Number.NaN,
       );
+      try {
+        player.enableText(false);
+      } catch {
+        /* best-effort */
+      }
       playerRef.current = player;
     })();
 
