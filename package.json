@@ -35,5 +35,20 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "next>postcss": "8.5.18",
+      "next>sharp": "0.35.5",
+      "nanoid@3": "3.3.18",
+      "browserslist@4": "4.28.7",
+      "source-map-js@1": "1.2.2",
+      "brace-expansion@5": "5.0.11",
+      "semver@7": "7.8.5",
+      "baseline-browser-mapping": "2.11.33",
+      "caniuse-lite": "1.0.30001819",
+      "electron-to-chromium": "1.5.465",
+      "node-releases": "2.0.60"
+    }
   }
 }
