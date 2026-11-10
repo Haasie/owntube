@@ -1,0 +1,19 @@
+# Beoordeeld 10-11-2026: geen echte geheimen.
+# - tests/docs: fixture-waarden (0123…, abcd…)
+# - spikes/sabr-dash: openbare BotGuard-requestKey van YouTube's webclient en een
+#   verlopen integrityToken uit een debugvoorbeeld
+# Nieuwe meldingen niet blind hier toevoegen: eerst beoordelen.
+5de4ee2bb5af38a7c90dd7064c58447082423513:apps/web/src/server/remote/rss-pass.test.ts:generic-api-key:9
+3e9338d2bf66bec8e58696244188640c6996ffeb:apps/web/src/server/services/dash/sabr-vod.test.ts:generic-api-key:169
+1d882bf384d5531a0fc5f7de2a951becdf313d47:docs/superpowers/plans/2026-09-26-secret-feed-urls.md:generic-api-key:217
+23d58ddb0bd8f689406116bc309f8dde3c52d78a:feeds/hub/topic.test.ts:generic-api-key:72
+23d58ddb0bd8f689406116bc309f8dde3c52d78a:feeds/hub/topic.test.ts:generic-api-key:88
+3e01fcf8f68ca53d8b2c884795ad97bd8657d6fa:spikes/sabr-dash/README.md:generic-api-key:134
+c5ea99b2a7ff270b95ab99083ddcd2b05ea2865d:spikes/sabr-dash/main.ts:generic-api-key:50
+ea9f1c0e8daa952092d18e56f07d156bf9c1dfff:spikes/sabr-dash/potoken-test.ts:generic-api-key:29
+c5ea99b2a7ff270b95ab99083ddcd2b05ea2865d:spikes/sabr-dash/resilient.ts:generic-api-key:78
+c5ea99b2a7ff270b95ab99083ddcd2b05ea2865d:spikes/sabr-dash/resume-test.ts:generic-api-key:32
+46e82383705038727cbb24c3050ecdbe14e94dc1:spikes/sabr-dash/sabr.ts:generic-api-key:66
+92947e92be143a21d4b43daf803b27de8b76934e:spikes/sabr-dash/seek-fork-test.ts:generic-api-key:30
+c5ea99b2a7ff270b95ab99083ddcd2b05ea2865d:spikes/sabr-dash/seek-test.ts:generic-api-key:30
+92947e92be143a21d4b43daf803b27de8b76934e:spikes/sabr-dash/seek2-test.ts:generic-api-key:35

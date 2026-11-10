@@ -147,12 +147,17 @@ seconden lopen en dan hangt hij weer. Loop dit in deze volgorde af:
 
 ## 🔄 Automatische updates
 
-Elke push naar `main` draait `.github/workflows/deploy.yml`:
+`.github/workflows/deploy.yml` is de standaardpipeline (skill `deploy-cosmos-cloud`).
+Hij draait op elke push, elke PR en elke maandag. Er wordt alleen vanaf `main` gepusht,
+en alleen als alle poorten slagen:
 
-1. `pnpm lint` en `pnpm test`. Faalt er iets, dan stopt het hier en blijft
-   de server op de vorige versie.
-2. Bouwt `apps/web/Dockerfile` en pusht `ghcr.io/haasie/owntube:latest`
-   (plus een `sha-<commit>`-tag).
+1. Secret-scan (gitleaks) over de hele git-historie.
+2. `pnpm audit --prod`, `pnpm lint` en `pnpm test`.
+3. Bouwt `apps/web/Dockerfile`, scant het met Trivy (CRITICAL/HIGH met fix) en pusht
+   pas daarna `ghcr.io/haasie/owntube:latest` (plus `sha-<commit>`), met SBOM en provenance.
+
+Faalt er iets, dan blijft de server op de vorige versie. De wekelijkse run bouwt de
+OS-laag opnieuw (`OS_PATCH_DATE`) en vangt nieuwe CVE's.
 `owntube` en `owntube-cache-warmer` dragen het label `cosmos-auto-update=true`
 en `pull_policy: always`. De **native auto-update van Cosmos** rolt de nieuwe
 image daarmee vanzelf uit: Cosmos controleert **elke nacht om 02:00**
@@ -162,15 +167,11 @@ hij veranderd is.
 
 Meteen uitrollen in plaats van om 02:00: `./update.sh -f` op de server.
 
-**Optioneel, direct uitrollen bij elke push:** open in Cosmos de ServApp
-`owntube` → **Settings**, kopieer de **Webhook URL** en zet hem als repo-secret:
+Er is bewust geen webhook: CI heeft zo geen toegang tot de server nodig.
 
-```bash
-gh secret set COSMOS_WEBHOOK_URL --repo Haasie/owntube
-```
-
-(`gh` vraagt dan om de waarde; plak de URL.) Zonder secret meldt de workflow
-dat de deploy om 02:00 gebeurt.
+**Het image bevat geen pnpm.** De containercommando's in Cosmos (`pnpm exec tsx …`,
+`pnpm run start`, `pnpm warm:cache`) lopen via `apps/web/scripts/pnpm-shim.sh`, die
+alleen `exec`, `run` en scriptnamen uit `package.json` uitvoert.
 
 **Controleren wat er live draait:**
 
