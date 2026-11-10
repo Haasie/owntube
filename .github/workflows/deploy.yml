@@ -63,6 +63,10 @@ jobs:
           cache: pnpm
       - name: Afhankelijkheden (lockfile, geen install-scripts)
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Native modules bouwen (alleen deze, bewust)
+        # --ignore-scripts slaat ook de build van native bindings over; de tests hebben
+        # better-sqlite3 en bcrypt echt nodig. Alleen deze twee draaien hun install-script.
+        run: pnpm --filter web rebuild better-sqlite3 bcrypt
       - name: Bekende kwetsbaarheden (pnpm audit, productie)
         # Alleen productie-afhankelijkheden: devDependencies komen niet in het image,
         # en de image-scan (Trivy) hieronder dekt wat er wel in zit.
